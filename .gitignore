@@ -34,3 +34,9 @@ Thumbs.db
 .DS_Store
 .env.local
 .env.*.local
+
+# Office documents
+*.docx
+# Explicitly ignore the PRD docx
+AI_Code_Review_Bot_PRD.docx
+
