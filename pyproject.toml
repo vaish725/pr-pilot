@@ -13,6 +13,8 @@ dependencies = [
     "httpx>=0.24",
     "PyGithub>=1.59",
     "python-dotenv>=1.0",
+    "PyJWT>=2.8",
+    "requests>=2.31",
 ]
 
 [tool.pytest.ini_options]
