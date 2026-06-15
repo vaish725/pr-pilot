@@ -3,6 +3,10 @@ from fastapi.responses import JSONResponse
 import hmac
 import hashlib
 import os
+from pydantic import BaseModel
+
+from pr_pilot.github_client import GitHubClient
+from pr_pilot.llm import analyze_diff, parse_diff_hunks
 
 app = FastAPI(title="pr-pilot webhook")
 
@@ -27,6 +31,57 @@ async def webhook(request: Request, x_hub_signature_256: str | None = Header(Non
 
     # Immediately ack the webhook to keep GitHub happy; real work should be enqueued.
     return JSONResponse({"status": "received"})
+
+
+class SimulateRequest(BaseModel):
+    owner: str
+    repo: str
+    pr_number: int
+
+
+@app.post("/simulate_review")
+async def simulate_review(req: SimulateRequest):
+    """Fetch PR diff, run dummy LLM, map suggestions to GitHub positions, and optionally post.
+
+    This endpoint is for local testing and demo only.
+    """
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise HTTPException(status_code=400, detail="GITHUB_TOKEN not set in env")
+
+    gh = GitHubClient(token=token)
+    diff = gh.fetch_pr_diff(req.owner, req.repo, req.pr_number)
+    if not diff:
+        return JSONResponse({"error": "empty diff"}, status_code=400)
+
+    files = parse_diff_hunks(diff)
+    comments = []
+    # For each file, call the dummy analyzer on the hunk text and map results.
+    for file_path, hunks in files.items():
+        for hunk in hunks:
+            hunk_text = "\n".join(hunk['lines'])
+            suggestions = analyze_diff(file_path, hunk_text)
+            # Map suggestion 'line' (which is index in hunk_text) to GitHub 'position' as offset in the hunk
+            pos = 0
+            for idx, line in enumerate(hunk['lines'], start=1):
+                # GitHub position counts lines in the diff hunk body; we use idx as a proxy
+                if line.startswith('+') and not line.startswith('+++'):
+                    # Create a comment for this position if any suggestion matches this hunk index
+                    for s in suggestions:
+                        # s['line'] is the index in the hunk_text; compare to idx
+                        if s.get('line') == idx:
+                            comments.append({
+                                'path': file_path,
+                                'position': idx,
+                                'body': f"[{s.get('severity')}] {s.get('message')}\n\nSuggestion: {s.get('suggestion')}",
+                            })
+
+    # If DO_POST=1 then post to GitHub, otherwise return the comments for inspection
+    if os.getenv('DO_POST') == '1' and comments:
+        review = gh.post_review(req.owner, req.repo, req.pr_number, comments)
+        return {"posted": True, "review_id": getattr(review, 'id', None)}
+
+    return {"posted": False, "comments": comments}
 
 
 if __name__ == "__main__":
