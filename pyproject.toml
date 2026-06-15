@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pr-pilot"
+version = "0.1.0"
+description = "AI Code Review Bot - GitHub App webhook scaffold"
+authors = [ { name = "vaish725" } ]
+dependencies = [
+    "fastapi>=0.95",
+    "uvicorn[standard]>=0.20",
+    "httpx>=0.24",
+    "PyGithub>=1.59",
+    "python-dotenv>=1.0",
+]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
