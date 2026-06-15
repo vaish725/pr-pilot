@@ -21,6 +21,26 @@ Project layout (this scaffold)
 - `pyproject.toml` - project metadata and dependencies
 - `.github/workflows/ci.yml` - CI to run tests
 
+Running the worker (dev)
+
+This project uses Redis + RQ for background processing. To run locally:
+
+1. Start Redis (e.g., via Homebrew):
+
+```bash
+brew install redis
+brew services start redis
+```
+
+2. Start the worker in a terminal:
+
+```bash
+./scripts/worker.sh
+```
+
+3. Start the webhook server (in another terminal) and ensure it's reachable (via smee/ngrok if testing with GitHub webhooks).
+
+
 See `prd.md` for the full Product Requirements Document with design, goals, and milestones.
 # pr-pilot
 A GitHub App that reviews pull requests automatically using an LLM - posts inline comments on changed lines within 60 seconds.

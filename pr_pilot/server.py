@@ -4,9 +4,12 @@ import hmac
 import hashlib
 import os
 from pydantic import BaseModel
+from rq import Queue
+from redis import Redis
 
 from pr_pilot.github_client import GitHubClient
 from pr_pilot.llm import analyze_diff, parse_diff_hunks
+from pr_pilot.worker import process_pr_job
 
 app = FastAPI(title="pr-pilot webhook")
 
@@ -29,7 +32,27 @@ async def webhook(request: Request, x_hub_signature_256: str | None = Header(Non
         if not verify_signature(secret, x_hub_signature_256 or "", body):
             raise HTTPException(status_code=401, detail="Invalid signature")
 
-    # Immediately ack the webhook to keep GitHub happy; real work should be enqueued.
+    # Immediately ack the webhook and enqueue work to Redis/RQ.
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    # Extract repo and PR number if present
+    action = payload.get('action')
+    pr = payload.get('pull_request') or {}
+    repo = payload.get('repository') or {}
+    owner = repo.get('owner', {}).get('login')
+    repo_name = repo.get('name')
+    pr_number = pr.get('number')
+
+    # Enqueue job if we have required info
+    if owner and repo_name and pr_number:
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+        redis_conn = Redis.from_url(redis_url)
+        q = Queue('pr-jobs', connection=redis_conn)
+        q.enqueue(process_pr_job, {"owner": owner, "repo": repo_name, "pr_number": pr_number})
+
     return JSONResponse({"status": "received"})
 
 
