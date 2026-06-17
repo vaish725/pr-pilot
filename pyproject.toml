@@ -17,9 +17,21 @@ dependencies = [
     "requests>=2.31",
     "redis>=4.7",
     "rq>=1.11",
+    "openai>=1.0",  # OpenAI client for GPT models
+    "anthropic>=0.19",  # Anthropic client (optional)
+    "tiktoken>=0.4",  # token accounting for OpenAI (best-effort)
+
+    "prometheus_client>=0.16",
 ]
+
+[project.optional-dependencies]
+dev = ["pre-commit", "flake8", "pytest", "hypothesis"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q"
 testpaths = ["tests"]
+
+[project.entry-points]
+[project.entry-points."flake8.extension"]
+ndt = "pr_pilot.linters.flake8_naive_datetime:NaiveDatetimeChecker"

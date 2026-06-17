@@ -15,9 +15,12 @@ def load_env():
     app_id = os.getenv("GITHUB_APP_ID")
     key_path = os.getenv("GITHUB_PRIVATE_KEY_PATH")
     test_repo = os.getenv("TEST_REPO", "vaish725/pr-pilot")
-    assert app_id, "GITHUB_APP_ID must be set in env to run this test"
-    assert key_path, "GITHUB_PRIVATE_KEY_PATH must be set in env to run this test"
-    assert os.path.exists(key_path), f"private key file not found: {key_path}"
+    if not app_id:
+        pytest.skip("GITHUB_APP_ID not set in env; skipping integration test")
+    if not key_path:
+        pytest.skip("GITHUB_PRIVATE_KEY_PATH not set in env; skipping integration test")
+    if not os.path.exists(key_path):
+        pytest.skip(f"private key file not found at {key_path}; skipping integration test")
     return app_id, key_path, test_repo
 
 

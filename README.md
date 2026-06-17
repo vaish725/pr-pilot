@@ -1,4 +1,7 @@
 # pr-pilot
+
+[![CI](https://github.com/vaish725/pr-pilot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vaish725/pr-pilot/actions/workflows/ci.yml)
+
 A GitHub App that automatically reviews pull requests using a large language model and posts inline review comments on changed lines.
 
 Goals (MVP)

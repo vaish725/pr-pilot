@@ -1,0 +1,24 @@
+Metadata-Version: 2.4
+Name: pr-pilot
+Version: 0.1.0
+Summary: AI Code Review Bot - GitHub App webhook scaffold
+Author: vaish725
+License-File: LICENSE
+Requires-Dist: fastapi>=0.95
+Requires-Dist: uvicorn[standard]>=0.20
+Requires-Dist: httpx>=0.24
+Requires-Dist: PyGithub>=1.59
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: PyJWT>=2.8
+Requires-Dist: requests>=2.31
+Requires-Dist: redis>=4.7
+Requires-Dist: rq>=1.11
+Requires-Dist: openai>=1.0
+Requires-Dist: anthropic>=0.19
+Requires-Dist: tiktoken>=0.4
+Provides-Extra: dev
+Requires-Dist: pre-commit; extra == "dev"
+Requires-Dist: flake8; extra == "dev"
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: hypothesis; extra == "dev"
+Dynamic: license-file

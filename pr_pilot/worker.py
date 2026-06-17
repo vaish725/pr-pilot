@@ -32,7 +32,9 @@ def process_pr_job(payload: Dict):
     for file_path, hunks in files.items():
         for hunk in hunks:
             hunk_text = "\n".join(hunk['lines'])
-            suggestions = analyze_diff(file_path, hunk_text)
+            # Pass repo context so the LLM layer can account tokens and enforce budgets
+            repo_id = f"{owner}/{repo}"
+            suggestions = analyze_diff(file_path, hunk_text, repo=repo_id)
             for idx, line in enumerate(hunk['lines'], start=1):
                 if line.startswith('+') and not line.startswith('+++'):
                     for s in suggestions:
