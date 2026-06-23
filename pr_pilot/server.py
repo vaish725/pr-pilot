@@ -1,8 +1,9 @@
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import hmac
 import hashlib
 import os
+import threading
 from pydantic import BaseModel
 try:
     from rq import Queue
@@ -12,18 +13,28 @@ except Exception:
     Queue = None
     Redis = None
     RQ_AVAILABLE = False
-    import threading
 
 from pr_pilot.github_client import GitHubClient
 from pr_pilot.llm import analyze_diff, parse_diff_hunks
 from pr_pilot.worker import process_pr_job
+from pr_pilot.llm_providers import OpenAIClient, AnthropicClient
+# SimulateRequest is defined later in this module; do not import it from elsewhere
 try:
-    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    import importlib
+    _prom = importlib.import_module('prometheus_client')
+    generate_latest = getattr(_prom, 'generate_latest')
+    CONTENT_TYPE_LATEST = getattr(_prom, 'CONTENT_TYPE_LATEST', 'text/plain; version=0.0.4; charset=utf-8')
 except Exception:
     generate_latest = None
-    CONTENT_TYPE_LATEST = 'text/plain; version=0.0.4; charset=utf-8'
+    CONTENT_TYPE_LATEST = 'text/plain; version=0.0.0; charset=utf-8'
 
 app = FastAPI(title="pr-pilot webhook")
+
+
+class SimulateRequest(BaseModel):
+    owner: str
+    repo: str
+    pr_number: int
 
 
 @app.get('/metrics')
@@ -32,6 +43,47 @@ async def metrics_endpoint():
         return JSONResponse({'error': 'metrics not available'}, status_code=501)
     data = generate_latest()
     return JSONResponse(content=data.decode('utf-8'), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post('/stream_review')
+async def stream_review(req: SimulateRequest):
+    """Stream the LLM review output for a single hunk as SSE (text/event-stream).
+
+    This is a demo endpoint for local testing. It streams the provider.stream() output.
+    """
+    # choose provider
+    provider_name = os.getenv('LLM_PROVIDER', os.getenv('PROVIDER', 'openai'))
+    if provider_name and provider_name.lower().startswith('anthropic'):
+        client = AnthropicClient()
+    else:
+        client = OpenAIClient()
+
+    # build prompt from PR diff
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise HTTPException(status_code=400, detail="GITHUB_TOKEN not set in env")
+
+    gh = GitHubClient(token=token)
+    diff = gh.fetch_pr_diff(req.owner, req.repo, req.pr_number)
+    if not diff:
+        raise HTTPException(status_code=400, detail="empty diff")
+
+    # For demo: stream the whole diff as prompt
+    prompt = (
+        "You are a code reviewer. Return short textual review comments as you generate them."
+        "\n\nDIFF:\n" + diff
+    )
+
+    async def event_stream():
+        # Providers now expose async generators; consume them with async for.
+        try:
+            async for part in client.stream(prompt):
+                yield f"data: {part}\n\n"
+        except Exception:
+            # emit an error sentinel for clients to observe
+            yield "data: [error]\n\n"
+
+    return StreamingResponse(event_stream(), media_type='text/event-stream')
 
 
 def verify_signature(secret: str, signature: str, payload: bytes) -> bool:
@@ -59,7 +111,6 @@ async def webhook(request: Request, x_hub_signature_256: str | None = Header(Non
         payload = {}
 
     # Extract repo and PR number if present
-    action = payload.get('action')
     pr = payload.get('pull_request') or {}
     repo = payload.get('repository') or {}
     owner = repo.get('owner', {}).get('login')
@@ -88,12 +139,6 @@ async def webhook(request: Request, x_hub_signature_256: str | None = Header(Non
     return JSONResponse({"status": "received"})
 
 
-class SimulateRequest(BaseModel):
-    owner: str
-    repo: str
-    pr_number: int
-
-
 @app.post("/simulate_review")
 async def simulate_review(req: SimulateRequest):
     """Fetch PR diff, run dummy LLM, map suggestions to GitHub positions, and optionally post.
@@ -117,7 +162,6 @@ async def simulate_review(req: SimulateRequest):
             hunk_text = "\n".join(hunk['lines'])
             suggestions = analyze_diff(file_path, hunk_text)
             # Map suggestion 'line' (which is index in hunk_text) to GitHub 'position' as offset in the hunk
-            pos = 0
             for idx, line in enumerate(hunk['lines'], start=1):
                 # GitHub position counts lines in the diff hunk body; we use idx as a proxy
                 if line.startswith('+') and not line.startswith('+++'):
@@ -128,7 +172,10 @@ async def simulate_review(req: SimulateRequest):
                             comments.append({
                                 'path': file_path,
                                 'position': idx,
-                                'body': f"[{s.get('severity')}] {s.get('message')}\n\nSuggestion: {s.get('suggestion')}",
+                                'body': (
+                                    f"[{s.get('severity')}] {s.get('message')}"
+                                    f"\n\nSuggestion: {s.get('suggestion')}"
+                                ),
                             })
 
     # If DO_POST=1 then post to GitHub, otherwise return the comments for inspection

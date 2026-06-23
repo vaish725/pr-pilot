@@ -7,8 +7,6 @@ Patterns checked:
 - datetime.utcnow
 - datetime.now(  without timezone argument (heuristic)
 """
-import re
-import sys
 from pathlib import Path
 from pr_pilot.linters.naive_datetime import check_file
 

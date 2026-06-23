@@ -16,6 +16,7 @@ Requires-Dist: rq>=1.11
 Requires-Dist: openai>=1.0
 Requires-Dist: anthropic>=0.19
 Requires-Dist: tiktoken>=0.4
+Requires-Dist: prometheus_client>=0.16
 Provides-Extra: dev
 Requires-Dist: pre-commit; extra == "dev"
 Requires-Dist: flake8; extra == "dev"

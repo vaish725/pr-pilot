@@ -42,7 +42,10 @@ def process_pr_job(payload: Dict):
                             comments.append({
                                 'path': file_path,
                                 'position': idx,
-                                'body': f"[{s.get('severity')}] {s.get('message')}\n\nSuggestion: {s.get('suggestion')}",
+                                'body': (
+                                    f"[{s.get('severity')}] {s.get('message')}"
+                                    f"\n\nSuggestion: {s.get('suggestion')}"
+                                ),
                             })
 
     if os.getenv('DO_POST') == '1' and comments:

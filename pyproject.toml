@@ -34,4 +34,4 @@ testpaths = ["tests"]
 
 [project.entry-points]
 [project.entry-points."flake8.extension"]
-ndt = "pr_pilot.linters.flake8_naive_datetime:NaiveDatetimeChecker"
+NDT = "pr_pilot.linters.flake8_naive_datetime:NaiveDatetimeChecker"

@@ -1,4 +1,3 @@
-import os
 import json
 from unittest import mock
 
@@ -8,8 +7,10 @@ from pr_pilot.llm_providers import OpenAIClient
 
 def test_split_into_chunks_small():
     text = "\n".join([f"line {i}" for i in range(10)])
-    # use a simple counter: 1 token per 4 chars heuristic
-    counter = lambda s: max(1, len(s) // 4)
+
+    def counter(s):
+        return max(1, len(s) // 4)
+
     chunks = _split_into_chunks(text, max_tokens=1000, counter=counter)
     assert len(chunks) == 1
 
@@ -52,8 +53,10 @@ def test_split_into_chunks_edgecase():
     # Create lines that would trigger chunk splits precisely
     long_line = "a" * 4000
     text = "\n".join([long_line for _ in range(3)])
-    # Choose a small max_tokens to force splitting
-    counter = lambda s: max(1, len(s) // 4)
+
+    def counter(s):
+        return max(1, len(s) // 4)
+
     chunks = _split_into_chunks(text, max_tokens=100, counter=counter)
     assert len(chunks) >= 2
 
@@ -82,4 +85,3 @@ def test_redis_budget_helper():
     assert res == 90
     res2 = check_and_decrement_budget(r, 'testkey', 1000, 100)
     assert res2 == -1 or res2 is None
-

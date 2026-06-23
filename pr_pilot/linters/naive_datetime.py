@@ -62,9 +62,11 @@ def check_source(source: str) -> List[Tuple[int, int, str]]:
                 # If there are any positional or keyword args, assume timezone may be provided
                 if attr == "now" and _is_datetime_name(func.value):
                     if not node.keywords and not node.args:
-                        matches.append(
-                            (node.lineno, node.col_offset, "Call datetime.now(...) with explicit timezone, e.g. datetime.now(timezone.utc)")
-                        )
+                        matches.append((
+                            node.lineno,
+                            node.col_offset,
+                            "Call datetime.now(...) with explicit timezone, e.g. datetime.now(timezone.utc)",
+                        ))
 
             self.generic_visit(node)
 

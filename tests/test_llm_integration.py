@@ -5,7 +5,10 @@ import time
 from pr_pilot.llm import analyze_diff
 
 
-@pytest.mark.skipif(os.getenv('RUN_LLM_INTEGRATION') != '1', reason='Integration test: enable with RUN_LLM_INTEGRATION=1')
+@pytest.mark.skipif(
+    os.getenv('RUN_LLM_INTEGRATION') != '1',
+    reason='Integration test: enable with RUN_LLM_INTEGRATION=1',
+)
 def test_llm_integration_small_run():
     """Gated integration test that runs against a live LLM provider.
 
@@ -16,7 +19,6 @@ def test_llm_integration_small_run():
     """
     api_key = os.getenv('LLM_API_KEY')
     redis_url = os.getenv('REDIS_URL')
-    provider = os.getenv('LLM_PROVIDER', 'openai')
     if not api_key:
         pytest.skip('LLM_API_KEY not set')
     if not redis_url:

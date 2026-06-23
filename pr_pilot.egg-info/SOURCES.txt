@@ -6,6 +6,7 @@ pr_pilot/cli.py
 pr_pilot/github_client.py
 pr_pilot/llm.py
 pr_pilot/llm_providers.py
+pr_pilot/metrics.py
 pr_pilot/redis_budget.py
 pr_pilot/server.py
 pr_pilot/worker.py
@@ -22,6 +23,9 @@ tests/test_llm.py
 tests/test_llm_chunking.py
 tests/test_llm_chunking_prop.py
 tests/test_llm_integration.py
+tests/test_llm_json_parsing.py
+tests/test_llm_json_parsing_retry.py
 tests/test_llm_providers.py
 tests/test_naive_datetime_linter.py
 tests/test_server.py
+tests/test_server_stream.py

@@ -1,22 +1,22 @@
 try:
-	from prometheus_client import Counter, Gauge
+    from prometheus_client import Counter, Gauge
 except Exception:
-	# Define no-op fallbacks so importing metrics is safe when prometheus_client is not installed.
-	class _NoopMetric:
-		def __init__(self, *args, **kwargs):
-			pass
+    # Define no-op fallbacks so importing metrics is safe when prometheus_client is not installed.
+    class _NoopMetric:
+        def __init__(self, *args, **kwargs):
+            pass
 
-		def labels(self, *args, **kwargs):
-			return self
+        def labels(self, *args, **kwargs):
+            return self
 
-		def inc(self, amount=1):
-			return None
+        def inc(self, amount=1):
+            return None
 
-		def set(self, value):
-			return None
+        def set(self, value):
+            return None
 
-	Counter = _NoopMetric  # type: ignore
-	Gauge = _NoopMetric  # type: ignore
+    Counter = _NoopMetric  # type: ignore
+    Gauge = _NoopMetric  # type: ignore
 
 # Total tokens consumed (estimate) by provider and repo
 tokens_used = Counter('pr_pilot_tokens_used_total', 'Estimated tokens used by provider', ['provider', 'repo'])

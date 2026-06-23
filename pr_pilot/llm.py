@@ -95,7 +95,10 @@ def analyze_diff(file_path: str, diff_text: str, timeout: int = 30, repo: Option
                 from pr_pilot.redis_budget import check_and_decrement_budget
                 new_remaining = check_and_decrement_budget(redis_conn, key, total_estimate, daily_budget)
                 if new_remaining == -1:
-                    logger.warning('LLM budget exhausted for %s (needed %s, remaining %s)', repo, total_estimate, remaining)
+                    logger.warning(
+                        'LLM budget exhausted for %s (needed %s, remaining %s)',
+                        repo, total_estimate, remaining,
+                    )
                     try:
                         metrics.budget_exhausted.labels(repo=repo).inc()
                         metrics.budget_remaining.labels(repo=repo).set(0)
@@ -123,19 +126,96 @@ def analyze_diff(file_path: str, diff_text: str, timeout: int = 30, repo: Option
                 pass
             continue
 
+    def _extract_json_array(resp_text: str) -> Optional[List]:
+        """Attempt to extract a JSON array from noisy model output.
+
+        Strategies:
+        1. Try json.loads on the whole response.
+        2. Find first balanced '[' ... ']' sequence and try to parse that.
+        3. Clean common issues: trailing commas, single quotes -> double quotes heuristic.
+        4. Fallback to ast.literal_eval on the candidate substring.
+        Returns the parsed list or None.
+        """
+        import re
+        import ast
+
+        # 1) direct parse
+        try:
+            v = json.loads(resp_text)
+            if isinstance(v, list):
+                return v
+        except Exception:
+            pass
+
+        # 2) find first balanced bracketed JSON array
+        start = resp_text.find('[')
+        if start == -1:
+            return None
+
+        depth = 0
+        end = -1
+        for i in range(start, len(resp_text)):
+            ch = resp_text[i]
+            if ch == '[':
+                depth += 1
+            elif ch == ']':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+
+        if end == -1:
+            # no balanced array found
+            return None
+
+        candidate = resp_text[start:end+1]
+
+        # try to clean trailing commas like `[{},]` -> `[{}]`
+        candidate_clean = re.sub(r',\s*\]', ']', candidate)
+
+        # if single quotes appear more than double quotes, try a conservative replace
+        if candidate_clean.count("'") > candidate_clean.count('"'):
+            cand2 = candidate_clean.replace("'", '"')
+        else:
+            cand2 = candidate_clean
+
+        try:
+            v = json.loads(cand2)
+            if isinstance(v, list):
+                return v
+        except Exception:
+            pass
+
+        # fallback to literal_eval which accepts single quotes and pythonic dicts
+        try:
+            v = ast.literal_eval(candidate)
+            if isinstance(v, list):
+                return v
+        except Exception:
+            pass
+
+        return None
+
     suggestions: List[Dict] = []
     for resp in responses:
-        parsed = None
-        try:
-            parsed = json.loads(resp)
-        except Exception:
+        parsed = _extract_json_array(resp)
+        # If parsing failed, attempt one gentle retry by asking the model to return only JSON.
+        if parsed is None and 'client' in locals():
             try:
-                start = resp.index('[')
-                end = resp.rindex(']')
-                parsed = json.loads(resp[start:end+1])
+                retry_prompt = (
+                    "The previous response included extra text. "
+                    "Please respond with only a valid JSON array (e.g. [{{...}}, ...]) and nothing else."
+                    "\nPrevious response:\n" + resp
+                )
+                retry_out = client.call(retry_prompt, timeout=max(5, timeout // 2))
+                if retry_out:
+                    parsed = _extract_json_array(retry_out)
             except Exception:
-                logger.exception('Failed to extract JSON array from LLM response: %s', resp)
-                continue
+                logger.exception('Retry to fetch JSON from LLM failed')
+
+        if not parsed:
+            logger.warning('Failed to extract JSON array from LLM response (after retry): %s', resp)
+            continue
 
         if isinstance(parsed, list):
             for item in parsed:
@@ -162,13 +242,13 @@ def parse_diff_hunks(diff_text: str):
     lines = diff_text.splitlines()
     i = 0
     while i < len(lines):
-        l = lines[i]
-        if l.startswith('+++ '):
-            cur_file = l[4:].strip()
+        ln = lines[i]
+        if ln.startswith('+++ '):
+            cur_file = ln[4:].strip()
             files[cur_file] = []
             i += 1
             continue
-        m = hunk_re.match(l)
+        m = hunk_re.match(ln)
         if m and cur_file:
             old_start, old_len, new_start, new_len = map(int, m.groups())
             i += 1
@@ -187,5 +267,3 @@ def parse_diff_hunks(diff_text: str):
             continue
         i += 1
     return files
-
-

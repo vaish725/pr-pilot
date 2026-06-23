@@ -36,6 +36,7 @@ def test_split_with_simple_counter():
 
     # Reassembly should preserve content (ignoring trailing newline differences)
     reassembled = "\n".join(chunks)
+
     def _norm(s: str):
         parts = s.split('\n')
         while parts and parts[-1] == '':

@@ -6,12 +6,12 @@ except Exception:  # pragma: no cover - skip when hypothesis isn't installed
     pytest.skip("Hypothesis not installed; skipping property-based chunking tests", allow_module_level=True)
 
 from pr_pilot.llm import _split_into_chunks
-from pr_pilot.llm_providers import OpenAIClient
 import re
 
 
 def simple_counter(text: str) -> int:
     return len(re.findall(r"\w+", text))
+
 
 # avoid control characters which interact badly with splitting; allow printable characters only
 safe_text = st.text(min_size=0, max_size=80, alphabet=st.characters(blacklist_categories=('Cc',)))

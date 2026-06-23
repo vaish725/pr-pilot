@@ -16,3 +16,11 @@ def test_anthropic_token_count_fallback():
     tokens = client.count_tokens(text)
     assert tokens > 0
     assert tokens < len(text)
+
+
+def test_anthropic_long_identifier_handling():
+    client = AnthropicClient(api_key="not-used")
+    # long identifier should be chunked into multiple tokens
+    long_ident = "a" * 120
+    tokens = client.count_tokens(long_ident)
+    assert tokens >= 10

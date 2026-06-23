@@ -26,7 +26,12 @@ class GitHubClient:
 
     def _init_with_installation_token(self, owner: str, repo: str):
         # If we already have a valid installation token, use it
-        if self._installation_token and self._installation_token_expires_at and time.time() < self._installation_token_expires_at - 30:
+        token_valid = (
+            self._installation_token
+            and self._installation_token_expires_at
+            and time.time() < self._installation_token_expires_at - 30
+        )
+        if token_valid:
             if not self._gh:
                 self._gh = Github(self._installation_token)
             return
@@ -66,9 +71,7 @@ class GitHubClient:
             raise RuntimeError(f"Failed to create installation token: {r2.status_code} {r2.text}")
         data = r2.json()
         self._installation_token = data["token"]
-        # The API returns an ISO timestamp; parse expiry into epoch seconds
-        expires_at = data.get("expires_at")
-        # Fallback: default 9 minutes
+        # The API returns an ISO timestamp; we use a fixed 9-minute fallback
         self._installation_token_expires_at = time.time() + 9 * 60
         self._gh = Github(self._installation_token)
 
@@ -97,5 +100,3 @@ class GitHubClient:
         repository = self._gh.get_repo(f"{owner}/{repo}")
         pr = repository.get_pull(pr_number)
         return pr.create_review(event="COMMENT", body="Automated review from pr-pilot", comments=comments)
-
-
