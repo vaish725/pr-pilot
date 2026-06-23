@@ -230,32 +230,55 @@ def analyze_diff(file_path: str, diff_text: str, timeout: int = 30, repo: Option
 
 
 def parse_diff_hunks(diff_text: str):
-    """Parse a unified diff into hunks. Yields tuples (file_path, hunks) where hunks is a list of dicts.
+    """Parse a unified diff into per-file hunk lists.
 
-    Each hunk dict contains: { 'old_start', 'old_lines', 'new_start', 'new_lines', 'lines' }
-    This is a minimal parser sufficient for position mapping in the scaffold.
+    Each hunk dict contains:
+      old_start, old_lines, new_start, new_lines — from the @@ header
+      lines                                       — body lines (context/+/-)
+      position_start                              — GitHub position of the @@ line itself
+
+    GitHub review comment positions are 1-based, counted from the first @@ line
+    of each file's diff section. Every line (@@, context, +, -) increments the
+    counter; diff --git / index / --- / +++ headers do NOT count.
+
+    To get the GitHub position for body line at 1-based idx:
+        position = hunk['position_start'] + idx
     """
     import re
     files = {}
     cur_file = None
-    hunk_re = re.compile(r"@@ -(\d+),(\d+) \+(\d+),(\d+) @@")
+    file_position = 0
+    # Optional comma+count handles single-line hunks like "@@ -1 +1 @@"
+    hunk_re = re.compile(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
     lines = diff_text.splitlines()
     i = 0
     while i < len(lines):
         ln = lines[i]
         if ln.startswith('+++ '):
-            cur_file = ln[4:].strip()
-            files[cur_file] = []
+            raw = ln[4:].strip()
+            # Strip the git b/ prefix; ignore /dev/null (pure deletions)
+            if raw == '/dev/null':
+                cur_file = None
+            else:
+                cur_file = raw[2:] if raw.startswith('b/') else raw
+                if cur_file not in files:
+                    files[cur_file] = []
+            file_position = 0  # position resets for each file
             i += 1
             continue
         m = hunk_re.match(ln)
         if m and cur_file:
-            old_start, old_len, new_start, new_len = map(int, m.groups())
+            old_start = int(m.group(1))
+            old_len = int(m.group(2)) if m.group(2) is not None else 1
+            new_start = int(m.group(3))
+            new_len = int(m.group(4)) if m.group(4) is not None else 1
+            file_position += 1  # the @@ line counts as one position
+            position_start = file_position
             i += 1
             hunk_lines = []
-            # collect hunk body until next hunk header or file marker
             while i < len(lines) and not lines[i].startswith('@@ ') and not lines[i].startswith('+++ '):
                 hunk_lines.append(lines[i])
+                file_position += 1
                 i += 1
             files[cur_file].append({
                 'old_start': old_start,
@@ -263,6 +286,7 @@ def parse_diff_hunks(diff_text: str):
                 'new_start': new_start,
                 'new_lines': new_len,
                 'lines': hunk_lines,
+                'position_start': position_start,
             })
             continue
         i += 1

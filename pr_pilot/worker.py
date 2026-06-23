@@ -35,13 +35,15 @@ def process_pr_job(payload: Dict):
             # Pass repo context so the LLM layer can account tokens and enforce budgets
             repo_id = f"{owner}/{repo}"
             suggestions = analyze_diff(file_path, hunk_text, repo=repo_id)
+            position_start = hunk['position_start']
             for idx, line in enumerate(hunk['lines'], start=1):
                 if line.startswith('+') and not line.startswith('+++'):
+                    github_position = position_start + idx
                     for s in suggestions:
                         if s.get('line') == idx:
                             comments.append({
                                 'path': file_path,
-                                'position': idx,
+                                'position': github_position,
                                 'body': (
                                     f"[{s.get('severity')}] {s.get('message')}"
                                     f"\n\nSuggestion: {s.get('suggestion')}"

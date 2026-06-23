@@ -161,17 +161,15 @@ async def simulate_review(req: SimulateRequest):
         for hunk in hunks:
             hunk_text = "\n".join(hunk['lines'])
             suggestions = analyze_diff(file_path, hunk_text)
-            # Map suggestion 'line' (which is index in hunk_text) to GitHub 'position' as offset in the hunk
+            position_start = hunk['position_start']
             for idx, line in enumerate(hunk['lines'], start=1):
-                # GitHub position counts lines in the diff hunk body; we use idx as a proxy
                 if line.startswith('+') and not line.startswith('+++'):
-                    # Create a comment for this position if any suggestion matches this hunk index
+                    github_position = position_start + idx
                     for s in suggestions:
-                        # s['line'] is the index in the hunk_text; compare to idx
                         if s.get('line') == idx:
                             comments.append({
                                 'path': file_path,
-                                'position': idx,
+                                'position': github_position,
                                 'body': (
                                     f"[{s.get('severity')}] {s.get('message')}"
                                     f"\n\nSuggestion: {s.get('suggestion')}"
