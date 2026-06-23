@@ -18,6 +18,7 @@ from pr_pilot.github_client import GitHubClient
 from pr_pilot.llm import analyze_diff, parse_diff_hunks
 from pr_pilot.worker import process_pr_job
 from pr_pilot.llm_providers import OpenAIClient, AnthropicClient
+from pr_pilot.review_summary import build_review_summary
 # SimulateRequest is defined later in this module; do not import it from elsewhere
 try:
     import importlib
@@ -168,9 +169,11 @@ async def simulate_review(req: SimulateRequest):
 
     comments = []
     file_lines_cache: dict = {}
+    files_reviewed = 0
     for file_path, hunks in files.items():
         if not cfg.should_review_file(file_path):
             continue
+        files_reviewed += 1
 
         if head_sha and file_path not in file_lines_cache:
             file_lines_cache[file_path] = gh.fetch_file_content(req.owner, req.repo, file_path, head_sha)
@@ -209,13 +212,14 @@ async def simulate_review(req: SimulateRequest):
                             })
 
     comments = comments[:cfg.max_comments]
+    summary = build_review_summary(comments, files_reviewed)
 
     # If DO_POST=1 then post to GitHub, otherwise return the comments for inspection
     if os.getenv('DO_POST') == '1' and comments:
-        review = gh.post_review(req.owner, req.repo, req.pr_number, comments)
-        return {"posted": True, "review_id": getattr(review, 'id', None)}
+        review = gh.post_review(req.owner, req.repo, req.pr_number, comments, body=summary)
+        return {"posted": True, "review_id": getattr(review, 'id', None), "summary": summary}
 
-    return {"posted": False, "comments": comments}
+    return {"posted": False, "comments": comments, "summary": summary}
 
 
 if __name__ == "__main__":

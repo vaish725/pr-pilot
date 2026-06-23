@@ -121,13 +121,21 @@ class GitHubClient:
             logger.warning('Failed to parse .reviewbot.yml for %s/%s@%s', owner, repo, ref)
         return ReviewConfig()
 
-    def post_review(self, owner: str, repo: str, pr_number: int, comments: list[dict]) -> Any:
+    def post_review(
+        self, owner: str, repo: str, pr_number: int,
+        comments: list[dict], body: str = "",
+    ) -> Any:
         """Post a single review with inline comments.
 
         comments: list of {'path': str, 'position': int, 'body': str}
+        body: top-level review body (markdown summary).
         """
         if not self._gh:
             self._ensure_gh(owner, repo)
         repository = self._gh.get_repo(f"{owner}/{repo}")
         pr = repository.get_pull(pr_number)
-        return pr.create_review(event="COMMENT", body="Automated review from pr-pilot", comments=comments)
+        return pr.create_review(
+            event="COMMENT",
+            body=body or "Automated review from pr-pilot",
+            comments=comments,
+        )

@@ -4,6 +4,7 @@ from typing import Dict
 
 from pr_pilot.github_client import GitHubClient
 from pr_pilot.llm import parse_diff_hunks, analyze_diff
+from pr_pilot.review_summary import build_review_summary
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,12 @@ def process_pr_job(payload: Dict):
 
     comments = []
     file_lines_cache: dict = {}
+    files_reviewed = 0
     for file_path, hunks in files.items():
         if not cfg.should_review_file(file_path):
             logger.debug('Skipping %s (config filter)', file_path)
             continue
+        files_reviewed += 1
 
         if head_sha and file_path not in file_lines_cache:
             file_lines_cache[file_path] = gh.fetch_file_content(owner, repo, file_path, head_sha)
@@ -94,9 +97,11 @@ def process_pr_job(payload: Dict):
         )
         comments = comments[:cfg.max_comments]
 
-    if os.getenv('DO_POST') == '1' and comments:
-        review = gh.post_review(owner, repo, pr_number, comments)
-        logger.info('Posted review %s', getattr(review, 'id', None))
-        return {"posted": True, "review_id": getattr(review, 'id', None)}
+    summary = build_review_summary(comments, files_reviewed)
 
-    return {"posted": False, "comments": comments}
+    if os.getenv('DO_POST') == '1' and comments:
+        review = gh.post_review(owner, repo, pr_number, comments, body=summary)
+        logger.info('Posted review %s', getattr(review, 'id', None))
+        return {"posted": True, "review_id": getattr(review, 'id', None), "summary": summary}
+
+    return {"posted": False, "comments": comments, "summary": summary}
