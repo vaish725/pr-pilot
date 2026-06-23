@@ -6,11 +6,12 @@ import os
 import threading
 from pydantic import BaseModel
 try:
-    from rq import Queue
+    from rq import Queue, Retry
     from redis import Redis
     RQ_AVAILABLE = True
 except Exception:
     Queue = None
+    Retry = None
     Redis = None
     RQ_AVAILABLE = False
 
@@ -19,6 +20,8 @@ from pr_pilot.llm import analyze_diff, parse_diff_hunks
 from pr_pilot.worker import process_pr_job
 from pr_pilot.llm_providers import OpenAIClient, AnthropicClient
 from pr_pilot.review_summary import build_review_summary
+from pr_pilot.retry import review_failure_callback, MAX_RETRIES, RETRY_INTERVALS
+from pr_pilot.exceptions import LLMUnavailableError
 # SimulateRequest is defined later in this module; do not import it from elsewhere
 try:
     import importlib
@@ -124,7 +127,12 @@ async def webhook(request: Request, x_hub_signature_256: str | None = Header(Non
             redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
             redis_conn = Redis.from_url(redis_url)
             q = Queue('pr-jobs', connection=redis_conn)
-            q.enqueue(process_pr_job, {"owner": owner, "repo": repo_name, "pr_number": pr_number})
+            q.enqueue(
+                process_pr_job,
+                {"owner": owner, "repo": repo_name, "pr_number": pr_number},
+                retry=Retry(max=MAX_RETRIES, interval=RETRY_INTERVALS),
+                on_failure=review_failure_callback,
+            )
         else:
             # Fallback: run in background thread (no persistence)
             def _bg():
@@ -190,12 +198,18 @@ async def simulate_review(req: SimulateRequest):
                 ctx_before = file_lines[max(0, new_start_idx - _CONTEXT_LINES):new_start_idx]
                 ctx_after = file_lines[new_end_idx:new_end_idx + _CONTEXT_LINES]
 
-            suggestions = analyze_diff(
-                file_path, hunk_text,
-                context_before=ctx_before or None,
-                context_after=ctx_after or None,
-                focus_instruction=cfg.focus_instruction(),
-            )
+            try:
+                suggestions = analyze_diff(
+                    file_path, hunk_text,
+                    context_before=ctx_before or None,
+                    context_after=ctx_after or None,
+                    focus_instruction=cfg.focus_instruction(),
+                )
+            except LLMUnavailableError as exc:
+                return JSONResponse(
+                    {"error": "LLM unavailable", "detail": str(exc), "retryable": True},
+                    status_code=503,
+                )
             position_start = hunk['position_start']
             for idx, line in enumerate(hunk['lines'], start=1):
                 if line.startswith('+') and not line.startswith('+++'):

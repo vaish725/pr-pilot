@@ -37,6 +37,23 @@ def test_fetch_file_content_returns_empty_on_error():
     assert lines == []
 
 
+def test_post_issue_comment():
+    client = GitHubClient(token="fake")
+
+    fake_issue = mock.Mock()
+    fake_repo = mock.Mock()
+    fake_repo.get_issue.return_value = fake_issue
+
+    fake_gh = mock.Mock()
+    fake_gh.get_repo.return_value = fake_repo
+    client._gh = fake_gh
+
+    client.post_issue_comment("owner", "repo", 7, "hello from bot")
+
+    fake_repo.get_issue.assert_called_once_with(7)
+    fake_issue.create_comment.assert_called_once_with("hello from bot")
+
+
 def test_fetch_pr_diff_caches_head_sha():
     client = GitHubClient(token="fake")
 

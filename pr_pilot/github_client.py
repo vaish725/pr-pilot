@@ -121,6 +121,14 @@ class GitHubClient:
             logger.warning('Failed to parse .reviewbot.yml for %s/%s@%s', owner, repo, ref)
         return ReviewConfig()
 
+    def post_issue_comment(self, owner: str, repo: str, pr_number: int, body: str) -> Any:
+        """Post a plain (non-review) comment on the PR — visible immediately, no position needed."""
+        if not self._gh:
+            self._ensure_gh(owner, repo)
+        repository = self._gh.get_repo(f"{owner}/{repo}")
+        issue = repository.get_issue(pr_number)
+        return issue.create_comment(body)
+
     def post_review(
         self, owner: str, repo: str, pr_number: int,
         comments: list[dict], body: str = "",

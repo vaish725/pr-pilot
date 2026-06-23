@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 from pr_pilot.llm_providers import OpenAIClient, AnthropicClient
 from pr_pilot import metrics
+from pr_pilot.exceptions import LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,9 @@ def analyze_diff(
         except Exception:
             logger.exception('Failed to connect to Redis for budget enforcement')
 
+    llm_success_count = 0
+    llm_error_count = 0
+
     for chunk in chunks:
         prompt = prompt_prefix + chunk + prompt_suffix
         input_tokens = client.count_tokens(prompt)
@@ -132,6 +136,7 @@ def analyze_diff(
             out = client.call(prompt, timeout=timeout)
             if out:
                 responses.append(out)
+            llm_success_count += 1
             # emit metrics for estimated tokens and call success
             try:
                 metrics.tokens_used.labels(provider=type(client).__name__, repo=repo or 'unknown').inc(total_estimate)
@@ -139,12 +144,18 @@ def analyze_diff(
             except Exception:
                 pass
         except Exception:
+            llm_error_count += 1
             logger.exception('LLM call failed for %s (provider=%s)', file_path, provider_name)
             try:
                 metrics.llm_calls.labels(provider=type(client).__name__, result='failure').inc()
             except Exception:
                 pass
             continue
+
+    if chunks and llm_error_count > 0 and llm_success_count == 0:
+        raise LLMUnavailableError(
+            f"LLM provider '{provider_name}' failed on all {llm_error_count} call(s) for {file_path}"
+        )
 
     def _extract_json_array(resp_text: str) -> Optional[List]:
         """Attempt to extract a JSON array from noisy model output.
