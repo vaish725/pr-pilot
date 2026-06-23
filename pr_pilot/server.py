@@ -155,12 +155,44 @@ async def simulate_review(req: SimulateRequest):
         return JSONResponse({"error": "empty diff"}, status_code=400)
 
     files = parse_diff_hunks(diff)
+    head_sha = getattr(gh, '_last_head_sha', None)
+    _CONTEXT_LINES = int(os.getenv('LLM_CONTEXT_LINES', '20'))
+
+    cfg = gh.fetch_reviewbot_config(req.owner, req.repo, head_sha) if head_sha else None
+    if cfg is None:
+        from pr_pilot.config import ReviewConfig
+        cfg = ReviewConfig()
+
+    if not cfg.enabled:
+        return JSONResponse({"skipped": "disabled", "comments": []})
+
     comments = []
-    # For each file, call the dummy analyzer on the hunk text and map results.
+    file_lines_cache: dict = {}
     for file_path, hunks in files.items():
+        if not cfg.should_review_file(file_path):
+            continue
+
+        if head_sha and file_path not in file_lines_cache:
+            file_lines_cache[file_path] = gh.fetch_file_content(req.owner, req.repo, file_path, head_sha)
+        file_lines = file_lines_cache.get(file_path, [])
+
         for hunk in hunks:
             hunk_text = "\n".join(hunk['lines'])
-            suggestions = analyze_diff(file_path, hunk_text)
+
+            ctx_before: list = []
+            ctx_after: list = []
+            if file_lines:
+                new_start_idx = hunk['new_start'] - 1
+                new_end_idx = new_start_idx + hunk['new_lines']
+                ctx_before = file_lines[max(0, new_start_idx - _CONTEXT_LINES):new_start_idx]
+                ctx_after = file_lines[new_end_idx:new_end_idx + _CONTEXT_LINES]
+
+            suggestions = analyze_diff(
+                file_path, hunk_text,
+                context_before=ctx_before or None,
+                context_after=ctx_after or None,
+                focus_instruction=cfg.focus_instruction(),
+            )
             position_start = hunk['position_start']
             for idx, line in enumerate(hunk['lines'], start=1):
                 if line.startswith('+') and not line.startswith('+++'):
@@ -175,6 +207,8 @@ async def simulate_review(req: SimulateRequest):
                                     f"\n\nSuggestion: {s.get('suggestion')}"
                                 ),
                             })
+
+    comments = comments[:cfg.max_comments]
 
     # If DO_POST=1 then post to GitHub, otherwise return the comments for inspection
     if os.getenv('DO_POST') == '1' and comments:

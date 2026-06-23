@@ -61,6 +61,34 @@ def test_split_into_chunks_edgecase():
     assert len(chunks) >= 2
 
 
+def test_analyze_diff_context_included_in_prompt():
+    """context_before/after lines must appear in the prompt sent to the LLM."""
+    diff = "+x = 1\n"
+    before = ["# imports", "import os"]
+    after = ["y = 2", "z = 3"]
+
+    captured_prompts = []
+
+    fake_client = mock.Mock(spec=OpenAIClient)
+    fake_client.count_tokens.return_value = 1
+    fake_client.call.side_effect = lambda prompt, **_: (
+        captured_prompts.append(prompt) or "[]"
+    )
+
+    with mock.patch('pr_pilot.llm.OpenAIClient', return_value=fake_client):
+        analyze_diff('foo.py', diff_text=diff, context_before=before, context_after=after)
+
+    assert captured_prompts, "LLM call never made"
+    prompt = captured_prompts[0]
+    assert "CONTEXT BEFORE HUNK" in prompt
+    assert "# imports" in prompt
+    assert "CONTEXT AFTER HUNK" in prompt
+    assert "y = 2" in prompt
+    assert "FILE: foo.py" in prompt
+    # line index in JSON refers to DIFF section, so the updated label must be present
+    assert "DIFF section" in prompt
+
+
 def test_redis_budget_helper():
     from pr_pilot.redis_budget import check_and_decrement_budget
 

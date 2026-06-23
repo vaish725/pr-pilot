@@ -33,13 +33,22 @@ def _split_into_chunks(text: str, max_tokens: int, counter) -> List[str]:
     return chunks
 
 
-def analyze_diff(file_path: str, diff_text: str, timeout: int = 30, repo: Optional[str] = None) -> List[Dict]:
+def analyze_diff(
+    file_path: str,
+    diff_text: str,
+    timeout: int = 30,
+    repo: Optional[str] = None,
+    context_before: Optional[List[str]] = None,
+    context_after: Optional[List[str]] = None,
+    focus_instruction: str = "",
+) -> List[Dict]:
     """Call configured LLM provider to analyze a file hunk and return structured suggestions.
 
     Returns a list of dicts: { file, line, severity, message, suggestion }
     - Uses OPENAI if LLM_PROVIDER=openai (default), else ANTHROPIC if configured.
     - Performs simple chunking when diff_text is large.
     - Enforces a per-repo daily token budget if REDIS_URL and LLM_DAILY_BUDGET_TOKENS are set.
+    - context_before/context_after: up to N lines from the real file surrounding this hunk.
     """
     provider_name = os.getenv('LLM_PROVIDER', os.getenv('PROVIDER', 'openai'))
     if provider_name and provider_name.lower().startswith('anthropic'):
@@ -52,11 +61,22 @@ def analyze_diff(file_path: str, diff_text: str, timeout: int = 30, repo: Option
     system = (
         "You are a code review assistant. Given a unified diff for a single file hunk, "
         "return a JSON array of review suggestions. Each suggestion must be an object with keys: "
-        "line (1-based index within the provided hunk text), severity (INFO|STYLE|BUG|SECURITY), "
+        "line (1-based index within the DIFF section), severity (INFO|STYLE|BUG|SECURITY), "
         "message (short summary), suggestion (concrete code change or explanation)."
+        + (focus_instruction or "")
     )
 
-    prompt_prefix = system + "\n\nDIFF:\n"
+    prefix_parts = [system, f"\n\nFILE: {file_path}"]
+    if context_before:
+        prefix_parts.append("\n\nCONTEXT BEFORE HUNK:\n" + "\n".join(context_before))
+    prefix_parts.append("\n\nDIFF:\n")
+    prompt_prefix = "".join(prefix_parts)
+
+    suffix_parts = []
+    if context_after:
+        suffix_parts.append("\n\nCONTEXT AFTER HUNK:\n" + "\n".join(context_after))
+    suffix_parts.append("\n\nRespond only with valid JSON array.")
+    prompt_suffix = "".join(suffix_parts)
 
     chunks = _split_into_chunks(diff_text, max_input_tokens, client.count_tokens)
     responses: List[str] = []
@@ -72,7 +92,7 @@ def analyze_diff(file_path: str, diff_text: str, timeout: int = 30, repo: Option
             logger.exception('Failed to connect to Redis for budget enforcement')
 
     for chunk in chunks:
-        prompt = prompt_prefix + chunk + "\n\nRespond only with valid JSON array."
+        prompt = prompt_prefix + chunk + prompt_suffix
         input_tokens = client.count_tokens(prompt)
         output_estimate = int(os.getenv('LLM_OUTPUT_ESTIMATE_TOKENS', '512'))
         total_estimate = input_tokens + output_estimate

@@ -1,9 +1,12 @@
-from typing import Any, Optional
+from typing import Any, List, Optional
 import os
+import logging
 import time
 import jwt
 import requests
 from github import Github
+
+logger = logging.getLogger(__name__)
 
 
 class GitHubClient:
@@ -83,12 +86,40 @@ class GitHubClient:
 
     def fetch_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Return unified diff for the PR using PyGithub."""
-        # Ensure authentication is ready
         if not self._gh:
             self._ensure_gh(owner, repo)
         repository = self._gh.get_repo(f"{owner}/{repo}")
         pr = repository.get_pull(pr_number)
+        self._last_head_sha: Optional[str] = pr.head.sha
         return pr.patch or ""
+
+    def fetch_file_content(self, owner: str, repo: str, path: str, ref: str) -> List[str]:
+        """Return file lines at the given git ref, or [] on any error (binary, missing, etc.)."""
+        try:
+            if not self._gh:
+                self._ensure_gh(owner, repo)
+            repository = self._gh.get_repo(f"{owner}/{repo}")
+            contents = repository.get_contents(path, ref=ref)
+            text = contents.decoded_content.decode('utf-8', errors='replace')
+            return text.splitlines()
+        except Exception:
+            logger.warning('Could not fetch file content for %s at %s', path, ref)
+            return []
+
+    def fetch_reviewbot_config(self, owner: str, repo: str, ref: str):
+        """Return a ReviewConfig parsed from .reviewbot.yml at ref, or defaults if absent/invalid."""
+        from pr_pilot.config import ReviewConfig
+        lines = self.fetch_file_content(owner, repo, '.reviewbot.yml', ref)
+        if not lines:
+            return ReviewConfig()
+        try:
+            import yaml
+            data = yaml.safe_load('\n'.join(lines)) or {}
+            if isinstance(data, dict):
+                return ReviewConfig.from_dict(data)
+        except Exception:
+            logger.warning('Failed to parse .reviewbot.yml for %s/%s@%s', owner, repo, ref)
+        return ReviewConfig()
 
     def post_review(self, owner: str, repo: str, pr_number: int, comments: list[dict]) -> Any:
         """Post a single review with inline comments.

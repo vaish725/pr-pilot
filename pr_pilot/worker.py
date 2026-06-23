@@ -27,14 +27,50 @@ def process_pr_job(payload: Dict):
         logger.info("Empty diff for %s/%s#%s", owner, repo, pr_number)
         return {"comments": []}
 
+    head_sha = getattr(gh, '_last_head_sha', None)
+
+    # Load per-repo config from .reviewbot.yml (or defaults if absent)
+    cfg = gh.fetch_reviewbot_config(owner, repo, head_sha) if head_sha else None
+    if cfg is None:
+        from pr_pilot.config import ReviewConfig
+        cfg = ReviewConfig()
+
+    if not cfg.enabled:
+        logger.info('Review disabled via .reviewbot.yml for %s/%s#%s', owner, repo, pr_number)
+        return {"comments": [], "skipped": "disabled"}
+
     files = parse_diff_hunks(diff)
+    repo_id = f"{owner}/{repo}"
+    _CONTEXT_LINES = int(os.getenv('LLM_CONTEXT_LINES', '20'))
+
     comments = []
+    file_lines_cache: dict = {}
     for file_path, hunks in files.items():
+        if not cfg.should_review_file(file_path):
+            logger.debug('Skipping %s (config filter)', file_path)
+            continue
+
+        if head_sha and file_path not in file_lines_cache:
+            file_lines_cache[file_path] = gh.fetch_file_content(owner, repo, file_path, head_sha)
+        file_lines = file_lines_cache.get(file_path, [])
+
         for hunk in hunks:
             hunk_text = "\n".join(hunk['lines'])
-            # Pass repo context so the LLM layer can account tokens and enforce budgets
-            repo_id = f"{owner}/{repo}"
-            suggestions = analyze_diff(file_path, hunk_text, repo=repo_id)
+
+            ctx_before: list = []
+            ctx_after: list = []
+            if file_lines:
+                new_start_idx = hunk['new_start'] - 1  # 0-based
+                new_end_idx = new_start_idx + hunk['new_lines']
+                ctx_before = file_lines[max(0, new_start_idx - _CONTEXT_LINES):new_start_idx]
+                ctx_after = file_lines[new_end_idx:new_end_idx + _CONTEXT_LINES]
+
+            suggestions = analyze_diff(
+                file_path, hunk_text, repo=repo_id,
+                context_before=ctx_before or None,
+                context_after=ctx_after or None,
+                focus_instruction=cfg.focus_instruction(),
+            )
             position_start = hunk['position_start']
             for idx, line in enumerate(hunk['lines'], start=1):
                 if line.startswith('+') and not line.startswith('+++'):
@@ -49,6 +85,14 @@ def process_pr_job(payload: Dict):
                                     f"\n\nSuggestion: {s.get('suggestion')}"
                                 ),
                             })
+
+    # Apply per-repo comment cap
+    if len(comments) > cfg.max_comments:
+        logger.info(
+            'Capping comments from %d to %d for %s/%s#%s',
+            len(comments), cfg.max_comments, owner, repo, pr_number,
+        )
+        comments = comments[:cfg.max_comments]
 
     if os.getenv('DO_POST') == '1' and comments:
         review = gh.post_review(owner, repo, pr_number, comments)
