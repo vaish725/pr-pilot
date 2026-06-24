@@ -64,18 +64,22 @@ def test_cascade_delete_removes_comments(session):
 
 def test_comment_reaction_unique_constraint(session):
     from sqlalchemy.exc import IntegrityError
-    session.add(CommentReaction(owner='a', repo='b', pr_number=1, github_comment_id=100, reaction='+1', user_login='alice'))
+    rc = CommentReaction(owner='a', repo='b', pr_number=1, github_comment_id=100, reaction='+1', user_login='alice')
+    session.add(rc)
     session.commit()
 
-    session.add(CommentReaction(owner='a', repo='b', pr_number=1, github_comment_id=100, reaction='+1', user_login='alice'))
+    dup = CommentReaction(owner='a', repo='b', pr_number=1, github_comment_id=100, reaction='+1', user_login='alice')
+    session.add(dup)
     with pytest.raises(IntegrityError):
         session.commit()
     session.rollback()
 
 
 def test_reaction_positive_and_negative_stored(session):
-    session.add(CommentReaction(owner='o', repo='r', pr_number=3, github_comment_id=200, reaction='+1', user_login='alice'))
-    session.add(CommentReaction(owner='o', repo='r', pr_number=3, github_comment_id=201, reaction='-1', user_login='bob'))
+    session.add(CommentReaction(owner='o', repo='r', pr_number=3, github_comment_id=200, reaction='+1',
+                                user_login='alice'))
+    session.add(CommentReaction(owner='o', repo='r', pr_number=3, github_comment_id=201, reaction='-1',
+                                user_login='bob'))
     session.commit()
 
     rows = session.execute(

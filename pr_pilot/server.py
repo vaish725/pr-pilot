@@ -3,9 +3,13 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 import hmac
 import hashlib
+import logging
 import os
 import threading
+import time
+import uuid
 from pydantic import BaseModel
+
 try:
     from rq import Queue, Retry
     from redis import Redis
@@ -16,13 +20,16 @@ except Exception:
     Redis = None
     RQ_AVAILABLE = False
 
+from pr_pilot.exceptions import LLMUnavailableError
 from pr_pilot.github_client import GitHubClient
 from pr_pilot.llm import analyze_diff, parse_diff_hunks
-from pr_pilot.worker import process_pr_job
 from pr_pilot.llm_providers import OpenAIClient, AnthropicClient
-from pr_pilot.review_summary import build_review_summary
+from pr_pilot.logging_config import configure_logging, reset_request_id, set_request_id
 from pr_pilot.retry import review_failure_callback, MAX_RETRIES, RETRY_INTERVALS
-from pr_pilot.exceptions import LLMUnavailableError
+from pr_pilot.review_summary import build_review_summary
+from pr_pilot.worker import process_pr_job
+
+_server_logger = logging.getLogger(__name__)
 # SimulateRequest is defined later in this module; do not import it from elsewhere
 try:
     import importlib
@@ -39,17 +46,43 @@ _POSITIVE_REACTIONS = {'+1', '👍'}
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
+    configure_logging()
     if os.getenv('DATABASE_URL'):
         try:
             from pr_pilot.db import init_db
             init_db()
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('DB init failed on startup')
+            _server_logger.exception('DB init failed on startup')
     yield
 
 
 app = FastAPI(title="pr-pilot webhook", lifespan=_lifespan)
+
+
+@app.middleware('http')
+async def _request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get('X-Request-ID') or str(uuid.uuid4())
+    token = set_request_id(request_id)
+    start = time.monotonic()
+    try:
+        response = await call_next(request)
+        duration_ms = round((time.monotonic() - start) * 1000, 1)
+        _server_logger.info(
+            '%s %s', request.method, request.url.path,
+            extra={'duration_ms': duration_ms, 'status_code': response.status_code},
+        )
+        response.headers['X-Request-ID'] = request_id
+        return response
+    except Exception as exc:
+        duration_ms = round((time.monotonic() - start) * 1000, 1)
+        _server_logger.error(
+            '%s %s failed', request.method, request.url.path,
+            extra={'duration_ms': duration_ms, 'error': str(exc)},
+            exc_info=True,
+        )
+        raise
+    finally:
+        reset_request_id(token)
 
 
 class SimulateRequest(BaseModel):

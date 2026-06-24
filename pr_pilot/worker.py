@@ -1,10 +1,13 @@
 import os
 import re
 import logging
+import time
+import uuid
 from typing import Dict, List
 
 from pr_pilot.github_client import GitHubClient
 from pr_pilot.llm import parse_diff_hunks, analyze_diff
+from pr_pilot.logging_config import set_request_id
 from pr_pilot.review_summary import build_review_summary
 
 logger = logging.getLogger(__name__)
@@ -54,12 +57,22 @@ def process_pr_job(payload: Dict):
 
     payload: { owner, repo, pr_number }
     """
+    try:
+        from rq import get_current_job
+        job = get_current_job()
+        job_id = job.id if job else str(uuid.uuid4())
+    except Exception:
+        job_id = str(uuid.uuid4())
+    set_request_id(job_id)
+
     owner = payload.get("owner")
     repo = payload.get("repo")
     pr_number = payload.get("pr_number")
     if not (owner and repo and pr_number):
         logger.error("Invalid payload for process_pr_job: %s", payload)
         return {"error": "invalid payload"}
+
+    _job_start = time.monotonic()
 
     token = os.getenv("GITHUB_TOKEN")
     gh = GitHubClient(token=token)
@@ -142,9 +155,21 @@ def process_pr_job(payload: Dict):
     posted = os.getenv('DO_POST') == '1' and bool(comments)
     _save_review_run(owner, repo, pr_number, head_sha, files_reviewed, comments, posted=posted)
 
+    duration_ms = round((time.monotonic() - _job_start) * 1000, 1)
+
     if posted:
         review = gh.post_review(owner, repo, pr_number, comments, body=summary)
-        logger.info('Posted review %s', getattr(review, 'id', None))
-        return {"posted": True, "review_id": getattr(review, 'id', None), "summary": summary}
+        review_id = getattr(review, 'id', None)
+        logger.info(
+            'review posted',
+            extra={'owner': owner, 'repo': repo, 'pr_number': pr_number,
+                   'duration_ms': duration_ms},
+        )
+        return {"posted": True, "review_id": review_id, "summary": summary}
 
+    logger.info(
+        'review complete',
+        extra={'owner': owner, 'repo': repo, 'pr_number': pr_number,
+               'duration_ms': duration_ms},
+    )
     return {"posted": False, "comments": comments, "summary": summary}
