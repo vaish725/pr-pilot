@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 import hmac
 import hashlib
 import logging
@@ -372,6 +373,51 @@ async def repo_stats(owner: str, repo: str):
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get('/reviews/{owner}/{repo}')
+async def repo_reviews(owner: str, repo: str, limit: int = 20):
+    """Return recent review runs for a repo, newest first."""
+    if not os.getenv('DATABASE_URL'):
+        return JSONResponse({'error': 'DATABASE_URL not configured'}, status_code=501)
+    try:
+        from pr_pilot.db import get_session, init_db
+        from pr_pilot.models import ReviewRun
+        from sqlalchemy import select
+        init_db()
+        with get_session() as session:
+            runs = session.execute(
+                select(ReviewRun)
+                .where(ReviewRun.owner == owner, ReviewRun.repo == repo)
+                .order_by(ReviewRun.created_at.desc())
+                .limit(limit)
+            ).scalars().all()
+            result = [
+                {
+                    'id': run.id,
+                    'pr_number': run.pr_number,
+                    'head_sha': run.head_sha,
+                    'files_reviewed': run.files_reviewed,
+                    'comment_count': run.comment_count,
+                    'posted': run.posted,
+                    'created_at': run.created_at.isoformat() if run.created_at else None,
+                }
+                for run in runs
+            ]
+        return {'owner': owner, 'repo': repo, 'reviews': result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+_DASHBOARD_HTML = Path(__file__).parent.parent / 'dashboard' / 'index.html'
+
+
+@app.get('/dashboard', response_class=HTMLResponse)
+async def dashboard():
+    """Serve the React admin dashboard."""
+    if not _DASHBOARD_HTML.exists():
+        raise HTTPException(status_code=404, detail='Dashboard not found')
+    return HTMLResponse(content=_DASHBOARD_HTML.read_text())
 
 
 if __name__ == "__main__":
