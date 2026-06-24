@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 import hmac
@@ -32,7 +33,23 @@ except Exception:
     generate_latest = None
     CONTENT_TYPE_LATEST = 'text/plain; version=0.0.0; charset=utf-8'
 
-app = FastAPI(title="pr-pilot webhook")
+_REACTION_BODIES = {'+1', '-1', '👍', '👎'}
+_POSITIVE_REACTIONS = {'+1', '👍'}
+
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    if os.getenv('DATABASE_URL'):
+        try:
+            from pr_pilot.db import init_db
+            init_db()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('DB init failed on startup')
+    yield
+
+
+app = FastAPI(title="pr-pilot webhook", lifespan=_lifespan)
 
 
 class SimulateRequest(BaseModel):
@@ -101,27 +118,60 @@ def verify_signature(secret: str, signature: str, payload: bytes) -> bool:
 
 
 @app.post("/webhook")
-async def webhook(request: Request, x_hub_signature_256: str | None = Header(None)):
+async def webhook(
+    request: Request,
+    x_hub_signature_256: str | None = Header(None),
+    x_github_event: str | None = Header(None),
+):
     body = await request.body()
     secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
     if secret:
         if not verify_signature(secret, x_hub_signature_256 or "", body):
             raise HTTPException(status_code=401, detail="Invalid signature")
 
-    # Immediately ack the webhook and enqueue work to Redis/RQ.
     try:
         payload = await request.json()
     except Exception:
         payload = {}
 
-    # Extract repo and PR number if present
+    repo_info = payload.get('repository') or {}
+    owner = repo_info.get('owner', {}).get('login')
+    repo_name = repo_info.get('name')
+
+    # Handle reaction replies on review comments for acceptance rate tracking
+    if x_github_event == 'pull_request_review_comment' and os.getenv('DATABASE_URL'):
+        action = payload.get('action')
+        comment = payload.get('comment', {})
+        comment_body = comment.get('body', '').strip()
+        in_reply_to_id = comment.get('in_reply_to_id')
+        user_login = comment.get('user', {}).get('login')
+        pr_number_rc = (payload.get('pull_request') or {}).get('number')
+
+        if action == 'created' and in_reply_to_id and comment_body in _REACTION_BODIES:
+            reaction_str = '+1' if comment_body in _POSITIVE_REACTIONS else '-1'
+            try:
+                from pr_pilot.db import get_session, init_db
+                from pr_pilot.models import CommentReaction
+                init_db()
+                with get_session() as session:
+                    rec = CommentReaction(
+                        owner=owner or '',
+                        repo=repo_name or '',
+                        pr_number=pr_number_rc or 0,
+                        github_comment_id=in_reply_to_id,
+                        reaction=reaction_str,
+                        user_login=user_login,
+                    )
+                    session.merge(rec)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception('Failed to record reaction for comment %s', in_reply_to_id)
+        return JSONResponse({"status": "received"})
+
+    # Handle pull_request events — enqueue a review job
     pr = payload.get('pull_request') or {}
-    repo = payload.get('repository') or {}
-    owner = repo.get('owner', {}).get('login')
-    repo_name = repo.get('name')
     pr_number = pr.get('number')
 
-    # Enqueue job if we have required info
     if owner and repo_name and pr_number:
         if RQ_AVAILABLE:
             redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
@@ -234,6 +284,61 @@ async def simulate_review(req: SimulateRequest):
         return {"posted": True, "review_id": getattr(review, 'id', None), "summary": summary}
 
     return {"posted": False, "comments": comments, "summary": summary}
+
+
+@app.get('/stats/{owner}/{repo}')
+async def repo_stats(owner: str, repo: str):
+    """Return aggregated review history and acceptance rate for a repo."""
+    if not os.getenv('DATABASE_URL'):
+        return JSONResponse({'error': 'DATABASE_URL not configured'}, status_code=501)
+    try:
+        from pr_pilot.db import get_session, init_db
+        from pr_pilot.models import ReviewRun, ReviewComment, CommentReaction
+        from sqlalchemy import func, select
+        init_db()
+        with get_session() as session:
+            total_reviews = session.scalar(
+                select(func.count()).select_from(ReviewRun).where(
+                    ReviewRun.owner == owner, ReviewRun.repo == repo,
+                )
+            ) or 0
+
+            total_comments = session.scalar(
+                select(func.count()).select_from(ReviewComment)
+                .join(ReviewRun)
+                .where(ReviewRun.owner == owner, ReviewRun.repo == repo)
+            ) or 0
+
+            severity_rows = session.execute(
+                select(ReviewComment.severity, func.count())
+                .join(ReviewRun)
+                .where(ReviewRun.owner == owner, ReviewRun.repo == repo)
+                .group_by(ReviewComment.severity)
+            ).all()
+            severity_breakdown = {sev: cnt for sev, cnt in severity_rows if sev}
+
+            reaction_rows = session.execute(
+                select(CommentReaction.reaction, func.count())
+                .where(CommentReaction.owner == owner, CommentReaction.repo == repo)
+                .group_by(CommentReaction.reaction)
+            ).all()
+            reaction_counts = {r: cnt for r, cnt in reaction_rows}
+            positive = reaction_counts.get('+1', 0)
+            negative = reaction_counts.get('-1', 0)
+            total_reactions = positive + negative
+            acceptance_rate = round(positive / total_reactions, 3) if total_reactions > 0 else None
+
+        return {
+            'owner': owner,
+            'repo': repo,
+            'total_reviews': total_reviews,
+            'total_comments': total_comments,
+            'total_reactions': total_reactions,
+            'acceptance_rate': acceptance_rate,
+            'severity_breakdown': severity_breakdown,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 if __name__ == "__main__":

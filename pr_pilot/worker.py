@@ -1,12 +1,52 @@
 import os
+import re
 import logging
-from typing import Dict
+from typing import Dict, List
 
 from pr_pilot.github_client import GitHubClient
 from pr_pilot.llm import parse_diff_hunks, analyze_diff
 from pr_pilot.review_summary import build_review_summary
 
 logger = logging.getLogger(__name__)
+
+_SEV_RE = re.compile(r'^\[([A-Z]+)\]')
+
+
+def _save_review_run(
+    owner: str, repo: str, pr_number: int, head_sha, files_reviewed: int,
+    comments: List[dict], posted: bool,
+) -> None:
+    """Persist a review run and its comments to the database.
+
+    Silently skips when DATABASE_URL is not configured.
+    """
+    if not os.getenv('DATABASE_URL'):
+        return
+    try:
+        from pr_pilot.db import get_session, init_db
+        from pr_pilot.models import ReviewRun, ReviewComment
+        init_db()
+        with get_session() as session:
+            run = ReviewRun(
+                owner=owner, repo=repo, pr_number=pr_number,
+                head_sha=head_sha,
+                files_reviewed=files_reviewed,
+                comment_count=len(comments),
+                posted=posted,
+            )
+            session.add(run)
+            session.flush()
+            for c in comments:
+                m = _SEV_RE.match(c.get('body', ''))
+                session.add(ReviewComment(
+                    run_id=run.id,
+                    path=c['path'],
+                    position=c['position'],
+                    severity=m.group(1) if m else None,
+                    body=c.get('body'),
+                ))
+    except Exception:
+        logger.exception('Failed to persist review run for %s/%s#%s', owner, repo, pr_number)
 
 
 def process_pr_job(payload: Dict):
@@ -99,7 +139,10 @@ def process_pr_job(payload: Dict):
 
     summary = build_review_summary(comments, files_reviewed)
 
-    if os.getenv('DO_POST') == '1' and comments:
+    posted = os.getenv('DO_POST') == '1' and bool(comments)
+    _save_review_run(owner, repo, pr_number, head_sha, files_reviewed, comments, posted=posted)
+
+    if posted:
         review = gh.post_review(owner, repo, pr_number, comments, body=summary)
         logger.info('Posted review %s', getattr(review, 'id', None))
         return {"posted": True, "review_id": getattr(review, 'id', None), "summary": summary}
