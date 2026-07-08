@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Callable, Optional
+import json
 import os
 import logging
 import time
@@ -68,6 +69,71 @@ class OpenAIClient:
                 time.sleep(backoff)
                 backoff *= 2
         return None
+
+    @staticmethod
+    def to_tool_schema(spec: dict) -> dict:
+        """Convert a generic {name, description, parameters} tool spec into the
+        OpenAI chat.completions `tools` shape."""
+        return {
+            'type': 'function',
+            'function': {
+                'name': spec['name'],
+                'description': spec['description'],
+                'parameters': spec['parameters'],
+            },
+        }
+
+    def run_with_tools(
+        self, prompt: str, tools: list, tool_executor: Callable[[str, dict], str],
+        timeout: int = 30, max_tool_iterations: int = 1,
+    ):
+        """Run a bounded multi-turn tool-calling loop.
+
+        The model may call a tool instead of answering immediately; when it does,
+        tool_executor(name, arguments) is invoked and its string result is fed back
+        so the model can re-plan its answer with that extra context. Returns
+        (final_text, tool_call_count).
+        """
+        client = self._client(timeout)
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        tool_call_count = 0
+        for _ in range(max_tool_iterations + 1):
+            resp = client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                max_tokens=512,
+                temperature=0.2,
+            )
+            msg = resp.choices[0].message
+            tool_calls = getattr(msg, 'tool_calls', None)
+            if tool_calls and tool_call_count < max_tool_iterations:
+                messages.append({
+                    "role": "assistant",
+                    "content": msg.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        }
+                        for tc in tool_calls
+                    ],
+                })
+                for tc in tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments or '{}')
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                    result = tool_executor(tc.function.name, args)
+                    tool_call_count += 1
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                continue
+            return msg.content or '', tool_call_count
+        return '', tool_call_count
 
     async def stream(self, prompt: str, timeout: int = 30):
         """Async generator that yields text chunks from a streaming OpenAI call."""
@@ -180,6 +246,55 @@ class AnthropicClient:
                 time.sleep(backoff)
                 backoff *= 2
         return None
+
+    @staticmethod
+    def to_tool_schema(spec: dict) -> dict:
+        """Convert a generic {name, description, parameters} tool spec into the
+        Anthropic messages `tools` shape."""
+        return {
+            'name': spec['name'],
+            'description': spec['description'],
+            'input_schema': spec['parameters'],
+        }
+
+    def run_with_tools(
+        self, prompt: str, tools: list, tool_executor: Callable[[str, dict], str],
+        timeout: int = 30, max_tool_iterations: int = 1,
+    ):
+        """Run a bounded multi-turn tool-calling loop.
+
+        Mirrors OpenAIClient.run_with_tools but speaks Anthropic's tool_use /
+        tool_result content-block protocol. Returns (final_text, tool_call_count).
+        """
+        client = self._client(timeout)
+        messages = [{"role": "user", "content": prompt}]
+        tool_call_count = 0
+        for _ in range(max_tool_iterations + 1):
+            resp = client.messages.create(
+                model=self.model,
+                max_tokens=512,
+                temperature=0.2,
+                system=_SYSTEM_PROMPT,
+                tools=tools,
+                messages=messages,
+            )
+            tool_use_blocks = [b for b in resp.content if getattr(b, 'type', None) == 'tool_use']
+            if tool_use_blocks and tool_call_count < max_tool_iterations:
+                messages.append({"role": "assistant", "content": resp.content})
+                result_blocks = []
+                for block in tool_use_blocks:
+                    result = tool_executor(block.name, block.input or {})
+                    tool_call_count += 1
+                    result_blocks.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    })
+                messages.append({"role": "user", "content": result_blocks})
+                continue
+            text = ''.join(b.text for b in resp.content if getattr(b, 'type', None) == 'text')
+            return text, tool_call_count
+        return '', tool_call_count
 
     async def stream(self, prompt: str, timeout: int = 30):
         """Async generator that yields text chunks from a streaming Anthropic call."""

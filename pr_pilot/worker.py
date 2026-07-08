@@ -15,6 +15,22 @@ logger = logging.getLogger(__name__)
 _SEV_RE = re.compile(r'^\[([A-Z]+)\]')
 
 
+def _make_context_fetcher(file_lines: List[str]):
+    """Bind a context_fetcher(path, start_line, end_line) over an already-fetched file.
+
+    1-based, inclusive line range, clamped to the file's actual bounds. Reuses the
+    file content already pulled for the fixed context window, so a tool call from
+    the model costs no extra GitHub API request.
+    """
+    def _fetch(path: str, start_line: int, end_line: int) -> List[str]:
+        if not file_lines:
+            return []
+        start_idx = max(0, start_line - 1)
+        end_idx = min(len(file_lines), end_line)
+        return file_lines[start_idx:end_idx]
+    return _fetch
+
+
 def _save_review_run(
     owner: str, repo: str, pr_number: int, head_sha, files_reviewed: int,
     comments: List[dict], posted: bool,
@@ -156,6 +172,7 @@ def process_pr_job(payload: Dict):
                 context_before=ctx_before or None,
                 context_after=ctx_after or None,
                 focus_instruction=cfg.focus_instruction(),
+                context_fetcher=_make_context_fetcher(file_lines) if file_lines else None,
             )
             position_start = hunk['position_start']
             for idx, line in enumerate(hunk['lines'], start=1):

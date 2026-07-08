@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import Callable, List, Dict, Optional
 import os
 import logging
 import json
@@ -9,6 +9,53 @@ from pr_pilot import metrics
 from pr_pilot.exceptions import LLMUnavailableError
 
 logger = logging.getLogger(__name__)
+
+# Tool the model can call mid-review to see more of the file than the fixed
+# context window we pre-loaded, instead of guessing whether something it
+# references (an import, a helper, a class attribute) actually exists.
+_CONTEXT_TOOL_SPEC = {
+    'name': 'get_file_lines',
+    'description': (
+        "Fetch additional lines from the file under review, beyond what was already "
+        "provided as context. Call this before flagging something as a bug or a "
+        "missing reference if you are not certain a function, import, or variable "
+        "exists elsewhere in the file — do not guess."
+    ),
+    'parameters': {
+        'type': 'object',
+        'properties': {
+            'start_line': {'type': 'integer', 'description': '1-based start line (inclusive) in the full file.'},
+            'end_line': {'type': 'integer', 'description': '1-based end line (inclusive) in the full file.'},
+        },
+        'required': ['start_line', 'end_line'],
+    },
+}
+
+_MAX_TOOL_FETCH_LINES = 200
+
+
+def _make_tool_executor(file_path: str, context_fetcher: Callable[[str, int, int], List[str]]):
+    """Bind a get_file_lines tool_executor(name, arguments) -> str for one file."""
+
+    def _executor(name: str, arguments: dict) -> str:
+        if name != 'get_file_lines':
+            return f"Unknown tool '{name}'."
+        try:
+            start = int(arguments.get('start_line', 1))
+            end = int(arguments.get('end_line', start))
+        except (TypeError, ValueError):
+            return 'Invalid line range.'
+        if end < start:
+            start, end = end, start
+        if end - start + 1 > _MAX_TOOL_FETCH_LINES:
+            end = start + _MAX_TOOL_FETCH_LINES - 1
+        lines = context_fetcher(file_path, start, end)
+        if not lines:
+            return f'No content available for {file_path} lines {start}-{end}.'
+        numbered = [f'{start + i}: {line}' for i, line in enumerate(lines)]
+        return '\n'.join(numbered)
+
+    return _executor
 
 
 def _split_into_chunks(text: str, max_tokens: int, counter) -> List[str]:
@@ -42,6 +89,8 @@ def analyze_diff(
     context_before: Optional[List[str]] = None,
     context_after: Optional[List[str]] = None,
     focus_instruction: str = "",
+    context_fetcher: Optional[Callable[[str, int, int], List[str]]] = None,
+    max_tool_iterations: Optional[int] = None,
 ) -> List[Dict]:
     """Call configured LLM provider to analyze a file hunk and return structured suggestions.
 
@@ -50,6 +99,10 @@ def analyze_diff(
     - Performs simple chunking when diff_text is large.
     - Enforces a per-repo daily token budget if REDIS_URL and LLM_DAILY_BUDGET_TOKENS are set.
     - context_before/context_after: up to N lines from the real file surrounding this hunk.
+    - context_fetcher(path, start_line, end_line) -> List[str]: when given, the model is
+      offered a get_file_lines tool and may call it (bounded by max_tool_iterations) to pull
+      more of the file before finalizing its review, instead of guessing about code it
+      hasn't actually seen.
     """
     provider_name = os.getenv('LLM_PROVIDER', os.getenv('PROVIDER', 'openai'))
     if provider_name and provider_name.lower().startswith('anthropic'):
@@ -59,6 +112,9 @@ def analyze_diff(
         client = OpenAIClient()
         max_input_tokens = int(os.getenv('LLM_MAX_INPUT_TOKENS', '2000'))
 
+    if max_tool_iterations is None:
+        max_tool_iterations = int(os.getenv('LLM_MAX_TOOL_ITERATIONS', '1'))
+
     system = (
         "You are a code review assistant. Given a unified diff for a single file hunk, "
         "return a JSON array of review suggestions. Each suggestion must be an object with keys: "
@@ -66,6 +122,12 @@ def analyze_diff(
         "message (short summary), suggestion (concrete code change or explanation)."
         + (focus_instruction or "")
     )
+    if context_fetcher is not None:
+        system += (
+            " You have a get_file_lines tool available to read more of this file if the "
+            "surrounding context isn't enough to tell whether something it references "
+            "(an import, helper, attribute) really exists — call it before guessing."
+        )
 
     prefix_parts = [system, f"\n\nFILE: {file_path}"]
     if context_before:
@@ -133,7 +195,23 @@ def analyze_diff(
                 logger.exception('Failed to perform atomic budget decrement for key %s', key)
 
         try:
-            out = client.call(prompt, timeout=timeout)
+            if context_fetcher is not None:
+                tool = client.to_tool_schema(_CONTEXT_TOOL_SPEC)
+                executor = _make_tool_executor(file_path, context_fetcher)
+                out, tool_calls_made = client.run_with_tools(
+                    prompt, tools=[tool], tool_executor=executor,
+                    timeout=timeout, max_tool_iterations=max_tool_iterations,
+                )
+                if tool_calls_made:
+                    logger.info(
+                        'LLM used get_file_lines %d time(s) for %s', tool_calls_made, file_path,
+                    )
+                    try:
+                        metrics.llm_tool_calls.labels(provider=type(client).__name__).inc(tool_calls_made)
+                    except Exception:
+                        pass
+            else:
+                out = client.call(prompt, timeout=timeout)
             if out:
                 responses.append(out)
             llm_success_count += 1

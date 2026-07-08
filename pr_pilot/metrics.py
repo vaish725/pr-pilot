@@ -24,6 +24,9 @@ tokens_used = Counter('pr_pilot_tokens_used_total', 'Estimated tokens used by pr
 # Total LLM call attempts and failures
 llm_calls = Counter('pr_pilot_llm_calls_total', 'LLM calls made', ['provider', 'result'])
 
+# Tool calls the LLM made mid-review (e.g. fetching more file context)
+llm_tool_calls = Counter('pr_pilot_llm_tool_calls_total', 'Tool calls made by the LLM during review', ['provider'])
+
 # Budget exhausted events
 budget_exhausted = Counter('pr_pilot_budget_exhausted_total', 'Number of times budget was exhausted', ['repo'])
 

@@ -29,7 +29,7 @@ from pr_pilot.llm_providers import OpenAIClient, AnthropicClient
 from pr_pilot.logging_config import configure_logging, reset_request_id, set_request_id
 from pr_pilot.retry import review_failure_callback, MAX_RETRIES, RETRY_INTERVALS
 from pr_pilot.review_summary import build_review_summary
-from pr_pilot.worker import process_pr_job
+from pr_pilot.worker import process_pr_job, _make_context_fetcher
 
 load_dotenv()
 
@@ -296,6 +296,7 @@ async def simulate_review(req: SimulateRequest):
                     context_before=ctx_before or None,
                     context_after=ctx_after or None,
                     focus_instruction=cfg.focus_instruction(),
+                    context_fetcher=_make_context_fetcher(file_lines) if file_lines else None,
                 )
             except LLMUnavailableError as exc:
                 return JSONResponse(

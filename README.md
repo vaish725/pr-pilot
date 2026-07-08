@@ -14,8 +14,15 @@ A GitHub App that automatically reviews pull requests using a large language mod
 
 1. GitHub sends a webhook to the FastAPI server (`pr_pilot/server.py`) when a PR is opened or updated.
 2. The webhook handler enqueues a background job (Redis + RQ) that fetches the diff, resolves the repo's config, and calls the configured LLM provider to analyze changed lines.
-3. The worker (`pr_pilot/worker.py`) posts inline review comments back to the PR and, if `DATABASE_URL` is set, records the run and comments for later inspection.
-4. The admin dashboard reads that history and lets you inspect runs, adjust per-repo config, and retry failed jobs.
+3. Each hunk is sent to the LLM along with a `get_file_lines` tool. If the model is unsure whether something it's flagging (an import, a helper, a class attribute) actually exists elsewhere in the file, it can call that tool to pull more of the file and re-plan its answer, instead of guessing from a fixed context window. See "Agentic tool use" below.
+4. The worker (`pr_pilot/worker.py`) posts inline review comments back to the PR and, if `DATABASE_URL` is set, records the run and comments for later inspection.
+5. The admin dashboard reads that history and lets you inspect runs, adjust per-repo config, and retry failed jobs.
+
+## Agentic tool use
+
+The single call to `analyze_diff()` (`pr_pilot/llm.py`) is not a plain one-shot prompt: the model is offered a `get_file_lines(start_line, end_line)` tool via the provider's real function-calling API (OpenAI `tools=[...]` / Anthropic `tools=[...]` with `tool_use` blocks). When the model calls it, the tool is executed against the file content already fetched for the PR (no extra GitHub API request), the result is fed back into the conversation, and the model produces its final answer with that extra context — a bounded, multi-turn tool-calling loop rather than a single request/response.
+
+The loop is capped by `LLM_MAX_TOOL_ITERATIONS` (default `1`) to keep latency and cost predictable. The implementation lives in `OpenAIClient.run_with_tools` / `AnthropicClient.run_with_tools` (`pr_pilot/llm_providers.py`); see `tests/test_llm_providers.py` for the mocked multi-turn round trip and `tests/test_llm.py` for how `analyze_diff` wires the tool executor to the fetched file content.
 
 ## Quickstart (developer)
 
