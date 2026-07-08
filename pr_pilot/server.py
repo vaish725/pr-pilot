@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import hmac
@@ -31,6 +30,8 @@ from pr_pilot.logging_config import configure_logging, reset_request_id, set_req
 from pr_pilot.retry import review_failure_callback, MAX_RETRIES, RETRY_INTERVALS
 from pr_pilot.review_summary import build_review_summary
 from pr_pilot.worker import process_pr_job
+
+load_dotenv()
 
 _server_logger = logging.getLogger(__name__)
 # SimulateRequest is defined later in this module; do not import it from elsewhere
