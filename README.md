@@ -101,7 +101,3 @@ flake8
 ```
 
 Both are required to pass in CI before a change can merge.
-
-## Further reading
-
-See `prd.md` for the full Product Requirements Document, including design, goals, and milestones.

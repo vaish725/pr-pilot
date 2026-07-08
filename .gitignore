@@ -43,6 +43,9 @@ Thumbs.db
 # Explicitly ignore the PRD docx
 AI_Code_Review_Bot_PRD.docx
 
+# Product requirements doc (internal, not for the public repo)
+prd.md
+
 # Private keys and credentials
 private-key.pem
 *.pem
