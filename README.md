@@ -9,6 +9,15 @@ Goals (MVP)
 - Surface bugs, security issues, style suggestions, and missing error handling
 - Configurable per-repo via `.reviewbot.yml`
 
+Per-repo configuration
+
+Each repo's review behavior (`enabled`, `focus`, `ignore_paths`, `max_comments`) can come from two places:
+
+1. A `RepoConfig` row in the database, edited via the admin dashboard's Config panel or the `GET`/`PUT /config/{owner}/{repo}` API.
+2. A `.reviewbot.yml` file committed to the repo's default branch.
+
+If `DATABASE_URL` is set and a `RepoConfig` row exists for the repo, it **takes precedence over `.reviewbot.yml`** — the file is only consulted when no DB row exists. If neither is present, built-in defaults apply (`enabled: true`, `focus: all`, `max_comments: 20`, no ignored paths). This lets you override a repo's behavior instantly from the dashboard without needing a commit/PR to change `.reviewbot.yml`. See `_load_config` in `pr_pilot/worker.py` for the resolution order.
+
 Quickstart (developer)
 1. Create and install the GitHub App, configure webhook URL and permissions (read code, read/write pull requests).
 2. Copy `.env.example` -> `.env` and set GITHUB_APP_ID, GITHUB_PRIVATE_KEY, GITHUB_WEBHOOK_SECRET, and LLM_API_KEY.

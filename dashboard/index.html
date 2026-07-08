@@ -4,258 +4,731 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PR Pilot Admin</title>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; background: #f6f8fa; color: #1c1c1e; line-height: 1.5; }
     a { color: #0969da; }
+
+    .page { max-width: 960px; margin: 0 auto; padding: 36px 20px; }
+
+    .header { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+    .logo {
+      width: 32px; height: 32px; border-radius: 8px; background: #0969da;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 16px; font-weight: 700; flex-shrink: 0;
+    }
+    h1 { font-size: 20px; font-weight: 700; flex: 1; }
+
+    .auto-refresh { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #57606a; white-space: nowrap; }
+    .auto-refresh input[type=checkbox] { cursor: pointer; accent-color: #0969da; }
+    .refresh-dot { width: 7px; height: 7px; border-radius: 50%; background: #57606a; display: inline-block; }
+    .refresh-dot.active { background: #1a7f37; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .search-form { display: flex; gap: 8px; margin-bottom: 32px; }
+    .search-form input {
+      flex: 1; padding: 9px 14px; border: 1px solid #d0d7de;
+      border-radius: 6px; font-size: 14px; outline: none; background: #fff;
+      font-family: inherit;
+    }
+    .search-form input:focus { border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,.12); }
+    .btn {
+      padding: 9px 20px; background: #0969da; color: #fff; border: none;
+      border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;
+      font-family: inherit;
+    }
+    .btn:disabled { background: #8ab4f8; cursor: default; }
+    .btn:hover:not(:disabled) { background: #0860ca; }
+
+    .error-box {
+      background: #fff1f0; border: 1px solid #ffa39e; border-radius: 6px;
+      padding: 12px 16px; margin-bottom: 28px; color: #a8071a; font-size: 14px;
+      display: none;
+    }
+
+    .repo-label { font-size: 13px; color: #57606a; margin-bottom: 12px; display: none; }
+    .repo-label strong { color: #1c1c1e; }
+
+    .stat-cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+    .stat-card {
+      background: #fff; border: 1px solid #d0d7de; border-radius: 8px;
+      padding: 18px 22px; min-width: 150px; flex: 1 1 140px;
+    }
+    .stat-card .label { font-size: 12px; color: #57606a; margin-bottom: 4px; }
+    .stat-card .value { font-size: 30px; font-weight: 700; color: #1c1c1e; }
+    .stat-card .sub { font-size: 12px; color: #57606a; margin-top: 2px; }
+
+    .section {
+      background: #fff; border: 1px solid #d0d7de; border-radius: 8px;
+      margin-bottom: 24px; overflow: hidden;
+    }
+    .section-header {
+      padding: 13px 20px; border-bottom: 1px solid #d0d7de;
+      font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;
+    }
+    .section-header span { color: #57606a; font-weight: 400; }
+
+    .sev-list { padding: 16px 20px; display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
+    .sev-item { display: flex; align-items: center; gap: 7px; }
+    .sev-badge {
+      border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 700;
+      letter-spacing: .03em; color: #fff;
+    }
+    .sev-count { font-size: 20px; font-weight: 700; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      padding: 8px 16px; text-align: left; font-weight: 600; color: #57606a;
+      border-bottom: 1px solid #d0d7de; background: #f6f8fa;
+    }
+    td { padding: 10px 16px; border-top: 1px solid #f0f0f0; }
+    tr:first-child td { border-top: none; }
+
+    .badge {
+      border-radius: 12px; padding: 1px 8px; font-size: 11px;
+      border: 1px solid transparent;
+    }
+    .badge-posted { background: #dafbe1; color: #1a7f37; border-color: #a7f3c0; }
+    .badge-dry { background: #f6f8fa; color: #57606a; border-color: #d0d7de; }
+
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; color: #57606a; }
+    .muted { color: #57606a; }
+    .bold { font-weight: 600; }
+
+    .empty-msg { padding: 24px 20px; color: #57606a; font-size: 13px; }
+
+    .hidden { display: none !important; }
+
+    .landing {
+      text-align: center; padding: 60px 20px; color: #57606a;
+    }
+    .landing .icon { font-size: 48px; margin-bottom: 16px; }
+    .landing h2 { font-size: 18px; font-weight: 600; color: #1c1c1e; margin-bottom: 8px; }
+    .landing p { font-size: 14px; }
+
+    /* Config editor */
+    .config-body { padding: 20px; display: grid; gap: 16px; }
+    .config-row { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+    .config-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 180px; }
+    .config-field label { font-size: 12px; font-weight: 600; color: #57606a; }
+    .config-field input[type=number],
+    .config-field input[type=text],
+    .config-field select {
+      padding: 7px 10px; border: 1px solid #d0d7de; border-radius: 6px;
+      font-size: 13px; font-family: inherit; background: #fff; outline: none;
+    }
+    .config-field input:focus, .config-field select:focus {
+      border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,.12);
+    }
+    .config-field .hint { font-size: 11px; color: #8c959f; }
+    .toggle-row { display: flex; align-items: center; gap: 10px; }
+    .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0; background: #d0d7de; border-radius: 20px;
+      cursor: pointer; transition: background .2s;
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute; width: 14px; height: 14px;
+      left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .2s;
+    }
+    .toggle input:checked + .toggle-slider { background: #1a7f37; }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
+    .toggle-label { font-size: 13px; color: #1c1c1e; }
+    .config-save-row { display: flex; align-items: center; gap: 12px; padding-top: 4px; }
+    .btn-save {
+      padding: 7px 18px; background: #1a7f37; color: #fff; border: none;
+      border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;
+      font-family: inherit;
+    }
+    .btn-save:disabled { background: #8ab4f8; cursor: default; }
+    .btn-save:hover:not(:disabled) { background: #196130; }
+    .save-msg { font-size: 13px; display: none; }
+    .save-msg.ok { color: #1a7f37; }
+    .save-msg.err { color: #a8071a; }
+
+    /* Expandable review rows */
+    .review-row { cursor: pointer; user-select: none; }
+    .review-row:hover td { background: #f0f6ff; }
+    .expand-arrow { color: #8c959f; font-size: 9px; margin-right: 4px; }
+    .detail-row > td { padding: 0; }
+    .detail-inner {
+      padding: 14px 20px 16px 36px;
+      background: #fafbfc;
+      border-top: 2px solid rgba(9,105,218,.15);
+    }
+    .cmt-list { display: flex; flex-direction: column; gap: 8px; }
+    .cmt-item {
+      display: flex; gap: 10px; align-items: flex-start;
+      background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
+      padding: 9px 13px;
+    }
+    .cmt-left { flex-shrink: 0; }
+    .cmt-path { font-family: ui-monospace, monospace; font-size: 11px; color: #57606a; margin-bottom: 3px; }
+    .cmt-body { font-size: 12px; color: #1c1c1e; white-space: pre-wrap; }
+    .no-comments { color: #57606a; font-size: 13px; font-style: italic; }
+
+    /* Re-run button */
+    .btn-rerun {
+      padding: 3px 10px; font-size: 11px; font-weight: 500; font-family: inherit;
+      background: #fff; border: 1px solid #d0d7de; border-radius: 5px; cursor: pointer;
+      color: #1c1c1e; white-space: nowrap;
+    }
+    .btn-rerun:hover:not(:disabled) { border-color: #0969da; color: #0969da; background: #f0f6ff; }
+    .btn-rerun:disabled { opacity: 0.55; cursor: default; }
+
+    /* Load more */
+    .load-more-wrap { padding: 14px 20px; text-align: center; border-top: 1px solid #f0f0f0; }
+    .btn-load-more {
+      padding: 7px 24px; background: #fff; color: #0969da; border: 1px solid #0969da;
+      border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit;
+    }
+    .btn-load-more:hover:not(:disabled) { background: #f0f6ff; }
+    .btn-load-more:disabled { opacity: 0.5; cursor: default; }
+
+    /* Failed jobs */
+    .failed-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+    .failed-job-item {
+      border: 1px solid #ffa39e; border-radius: 6px; padding: 12px 16px; background: #fff8f8;
+    }
+    .failed-job-meta {
+      font-size: 12px; color: #57606a; margin-bottom: 6px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    .failed-job-meta strong { color: #1c1c1e; font-size: 13px; }
+    .failed-trace {
+      font-family: ui-monospace, monospace; font-size: 11px; color: #a8071a;
+      white-space: pre-wrap; word-break: break-all;
+      max-height: 56px; overflow: hidden; cursor: pointer;
+      border-top: 1px solid #ffd6d6; margin-top: 8px; padding-top: 8px;
+    }
+    .failed-trace.expanded { max-height: none; }
+    .failed-trace-hint { font-size: 10px; color: #57606a; margin-top: 3px; font-style: italic; }
   </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/babel">
-    const { useState } = React;
+  <div class="page">
 
+    <div class="header">
+      <div class="logo">P</div>
+      <h1>PR Pilot Admin</h1>
+      <label class="auto-refresh">
+        <input type="checkbox" id="autoRefresh" />
+        <span class="refresh-dot" id="refreshDot"></span>
+        Auto-refresh (30s)
+      </label>
+    </div>
+
+    <form class="search-form" id="searchForm">
+      <input id="repoInput" placeholder="owner/repo  e.g. acme/api" autocomplete="off" />
+      <button class="btn" type="submit" id="searchBtn">Load stats</button>
+    </form>
+
+    <div class="error-box" id="errorBox"></div>
+    <div class="repo-label" id="repoLabel"></div>
+
+    <div class="stat-cards hidden" id="statCards">
+      <div class="stat-card">
+        <div class="label">Total Reviews</div>
+        <div class="value" id="cTotal">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Total Comments</div>
+        <div class="value" id="cComments">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Reactions</div>
+        <div class="value" id="cReactions">—</div>
+      </div>
+      <div class="stat-card" id="acceptCard">
+        <div class="label">Acceptance Rate</div>
+        <div class="value" id="cAccept">—</div>
+        <div class="sub" id="cAcceptSub"></div>
+      </div>
+    </div>
+
+    <div class="section hidden" id="sevSection">
+      <div class="section-header">Severity Breakdown</div>
+      <div class="sev-list" id="sevList"></div>
+    </div>
+
+    <div class="section hidden" id="reviewsSection">
+      <div class="section-header">
+        Recent Reviews
+        <span id="reviewsCount"></span>
+      </div>
+      <div id="reviewsBody"></div>
+    </div>
+
+    <div class="section hidden" id="failedSection">
+      <div class="section-header" style="color:#a8071a">
+        Failed Jobs
+        <span id="failedCount"></span>
+      </div>
+      <div class="failed-body" id="failedBody"></div>
+    </div>
+
+    <div class="section hidden" id="configSection">
+      <div class="section-header">Bot Configuration <span>changes take effect on next PR review</span></div>
+      <div class="config-body">
+        <div class="config-row">
+          <div class="config-field">
+            <label>Bot enabled</label>
+            <div class="toggle-row">
+              <label class="toggle">
+                <input type="checkbox" id="cfgEnabled" checked />
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="toggle-label" id="cfgEnabledLabel">Enabled</span>
+            </div>
+          </div>
+          <div class="config-field">
+            <label for="cfgFocus">Focus mode</label>
+            <select id="cfgFocus">
+              <option value="all">All (bugs + security + style)</option>
+              <option value="bugs">Bugs only</option>
+              <option value="security">Security only</option>
+              <option value="style">Style only</option>
+            </select>
+          </div>
+          <div class="config-field">
+            <label for="cfgMaxComments">Max comments per review</label>
+            <input type="number" id="cfgMaxComments" min="1" max="100" value="20" />
+          </div>
+        </div>
+        <div class="config-field">
+          <label for="cfgIgnorePaths">Ignore paths <span style="font-weight:400">(comma-separated globs)</span></label>
+          <input type="text" id="cfgIgnorePaths" placeholder="vendor/*, *.generated.go, dist/**" />
+          <span class="hint">Files matching these patterns will be skipped during review</span>
+        </div>
+        <div class="config-save-row">
+          <button class="btn-save" id="cfgSaveBtn">Save config</button>
+          <span class="save-msg" id="cfgMsg"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="landing" id="landing">
+      <div class="icon">&#128269;</div>
+      <h2>Enter a repository to view review stats</h2>
+      <p>Type <strong>owner/repo</strong> above and click <strong>Load stats</strong></p>
+    </div>
+
+  </div>
+
+  <script>
     const SEV_COLORS = {
-      SECURITY: { bg: '#b71c1c', text: '#fff' },
-      BUG:      { bg: '#e65100', text: '#fff' },
-      STYLE:    { bg: '#1565c0', text: '#fff' },
-      SUGGESTION: { bg: '#4a4a4a', text: '#fff' },
+      SECURITY:   '#b71c1c',
+      BUG:        '#e65100',
+      STYLE:      '#1565c0',
+      SUGGESTION: '#4a4a4a',
     };
 
-    function SevBadge({ sev }) {
-      const c = SEV_COLORS[sev] || { bg: '#555', text: '#fff' };
-      return (
-        <span style={{
-          background: c.bg, color: c.text,
-          borderRadius: 4, padding: '2px 7px', fontSize: 11, fontWeight: 700,
-          letterSpacing: '0.03em',
-        }}>{sev}</span>
-      );
+    const $ = id => document.getElementById(id);
+
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function StatCard({ label, value, sub, accent }) {
-      return (
-        <div style={{
-          background: '#fff', border: '1px solid #d0d7de', borderRadius: 8,
-          padding: '18px 22px', minWidth: 150, flex: '1 1 140px',
-        }}>
-          <div style={{ fontSize: 12, color: '#57606a', marginBottom: 4 }}>{label}</div>
-          <div style={{ fontSize: 30, fontWeight: 700, color: accent || '#1c1c1e' }}>{value ?? '—'}</div>
-          {sub && <div style={{ fontSize: 12, color: '#57606a', marginTop: 2 }}>{sub}</div>}
-        </div>
-      );
-    }
-
-    function AcceptanceColor(rate) {
-      if (rate == null) return undefined;
+    function acceptanceColor(rate) {
+      if (rate == null) return null;
       if (rate >= 0.7) return '#2e7d32';
       if (rate >= 0.4) return '#e65100';
       return '#c62828';
     }
 
-    function App() {
-      const [input, setInput] = useState('');
-      const [repoLabel, setRepoLabel] = useState('');
-      const [stats, setStats] = useState(null);
-      const [reviews, setReviews] = useState([]);
-      const [loading, setLoading] = useState(false);
-      const [error, setError] = useState(null);
-
-      async function handleSearch(e) {
-        e.preventDefault();
-        const trimmed = input.trim();
-        const parts = trimmed.split('/');
-        if (parts.length !== 2 || !parts[0] || !parts[1]) {
-          setError('Enter in owner/repo format, e.g. acme/api');
-          return;
-        }
-        const [owner, repo] = parts;
-        setLoading(true);
-        setError(null);
-        setStats(null);
-        setReviews([]);
-        setRepoLabel(trimmed);
-        try {
-          const [sRes, rRes] = await Promise.all([
-            fetch(`/stats/${owner}/${repo}`),
-            fetch(`/reviews/${owner}/${repo}`),
-          ]);
-          if (!sRes.ok) {
-            const body = await sRes.json().catch(() => ({}));
-            throw new Error(body.error || `Stats request failed (${sRes.status})`);
-          }
-          setStats(await sRes.json());
-          if (rRes.ok) {
-            const rData = await rRes.json();
-            setReviews(rData.reviews || []);
-          }
-        } catch (err) {
-          setError(err.message);
-        } finally {
-          setLoading(false);
-        }
-      }
-
-      const acceptancePct = stats?.acceptance_rate != null
-        ? `${(stats.acceptance_rate * 100).toFixed(1)}%`
-        : null;
-
-      return (
-        <div style={{ maxWidth: 960, margin: '0 auto', padding: '36px 20px' }}>
-
-          {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 28 }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: 8,
-              background: '#0969da', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <span style={{ color: '#fff', fontSize: 16, fontWeight: 700 }}>P</span>
-            </div>
-            <h1 style={{ fontSize: 20, fontWeight: 700 }}>PR Pilot Admin</h1>
-          </div>
-
-          {/* Search */}
-          <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8, marginBottom: 32 }}>
-            <input
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              placeholder="owner/repo"
-              style={{
-                flex: 1, padding: '9px 14px', border: '1px solid #d0d7de',
-                borderRadius: 6, fontSize: 14, outline: 'none',
-                background: '#fff',
-              }}
-            />
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: '9px 20px', background: loading ? '#8ab4f8' : '#0969da',
-                color: '#fff', border: 'none', borderRadius: 6,
-                cursor: loading ? 'default' : 'pointer', fontSize: 14, fontWeight: 500,
-              }}
-            >{loading ? 'Loading…' : 'Load stats'}</button>
-          </form>
-
-          {/* Error */}
-          {error && (
-            <div style={{
-              background: '#fff1f0', border: '1px solid #ffa39e', borderRadius: 6,
-              padding: '12px 16px', marginBottom: 28, color: '#a8071a', fontSize: 14,
-            }}>{error}</div>
-          )}
-
-          {/* Stats */}
-          {stats && (
-            <>
-              <div style={{ fontSize: 13, color: '#57606a', marginBottom: 12 }}>
-                Showing stats for <strong>{repoLabel}</strong>
-              </div>
-
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
-                <StatCard label="Total Reviews" value={stats.total_reviews} />
-                <StatCard label="Total Comments" value={stats.total_comments} />
-                <StatCard label="Reactions" value={stats.total_reactions} />
-                <StatCard
-                  label="Acceptance Rate"
-                  value={acceptancePct ?? '—'}
-                  sub={stats.total_reactions > 0 ? `${stats.total_reactions} reactions` : 'no reactions yet'}
-                  accent={AcceptanceColor(stats.acceptance_rate)}
-                />
-              </div>
-
-              {/* Severity breakdown */}
-              {Object.keys(stats.severity_breakdown || {}).length > 0 && (
-                <div style={{
-                  background: '#fff', border: '1px solid #d0d7de', borderRadius: 8,
-                  padding: '16px 20px', marginBottom: 24,
-                }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Severity Breakdown</div>
-                  <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-                    {Object.entries(stats.severity_breakdown)
-                      .sort((a, b) => b[1] - a[1])
-                      .map(([sev, cnt]) => (
-                        <div key={sev} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                          <SevBadge sev={sev} />
-                          <span style={{ fontSize: 20, fontWeight: 700 }}>{cnt}</span>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Recent reviews table */}
-              <div style={{ background: '#fff', border: '1px solid #d0d7de', borderRadius: 8, overflow: 'hidden' }}>
-                <div style={{
-                  padding: '13px 20px', borderBottom: '1px solid #d0d7de',
-                  fontSize: 13, fontWeight: 600, display: 'flex', justifyContent: 'space-between',
-                }}>
-                  <span>Recent Reviews</span>
-                  {reviews.length > 0 && (
-                    <span style={{ color: '#57606a', fontWeight: 400 }}>{reviews.length} shown</span>
-                  )}
-                </div>
-
-                {reviews.length === 0 ? (
-                  <div style={{ padding: '24px 20px', color: '#57606a', fontSize: 13 }}>
-                    No reviews recorded yet.
-                  </div>
-                ) : (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                      <thead>
-                        <tr style={{ background: '#f6f8fa' }}>
-                          {['PR', 'Commit', 'Files', 'Comments', 'Posted', 'Time'].map(h => (
-                            <th key={h} style={{
-                              padding: '8px 16px', textAlign: 'left',
-                              fontWeight: 600, color: '#57606a',
-                              borderBottom: '1px solid #d0d7de',
-                            }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reviews.map((r, i) => (
-                          <tr key={r.id} style={{ borderTop: i === 0 ? 'none' : '1px solid #f0f0f0' }}>
-                            <td style={{ padding: '10px 16px', fontWeight: 600 }}>#{r.pr_number}</td>
-                            <td style={{ padding: '10px 16px', fontFamily: 'monospace', color: '#57606a', fontSize: 12 }}>
-                              {r.head_sha ? r.head_sha.slice(0, 7) : '—'}
-                            </td>
-                            <td style={{ padding: '10px 16px' }}>{r.files_reviewed ?? 0}</td>
-                            <td style={{ padding: '10px 16px' }}>{r.comment_count ?? 0}</td>
-                            <td style={{ padding: '10px 16px' }}>
-                              <span style={{
-                                background: r.posted ? '#dafbe1' : '#f6f8fa',
-                                color: r.posted ? '#1a7f37' : '#57606a',
-                                border: `1px solid ${r.posted ? '#a7f3c0' : '#d0d7de'}`,
-                                borderRadius: 12, padding: '1px 8px', fontSize: 11,
-                              }}>{r.posted ? 'posted' : 'dry run'}</span>
-                            </td>
-                            <td style={{ padding: '10px 16px', color: '#57606a' }}>
-                              {r.created_at
-                                ? new Date(r.created_at).toLocaleString(undefined, {
-                                    month: 'short', day: 'numeric',
-                                    hour: '2-digit', minute: '2-digit',
-                                  })
-                                : '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      );
+    function showError(msg) {
+      const box = $('errorBox');
+      box.textContent = msg;
+      box.style.display = 'block';
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    function hideError() { $('errorBox').style.display = 'none'; }
+
+    function setLoading(on) {
+      const btn = $('searchBtn');
+      btn.disabled = on;
+      btn.textContent = on ? 'Loading…' : 'Load stats';
+    }
+
+    // ── Stats ────────────────────────────────────────────────────────────────
+
+    function renderStats(data) {
+      $('cTotal').textContent = data.total_reviews ?? '—';
+      $('cComments').textContent = data.total_comments ?? '—';
+      $('cReactions').textContent = data.total_reactions ?? '—';
+
+      const rate = data.acceptance_rate;
+      const pct = rate != null ? (rate * 100).toFixed(1) + '%' : '—';
+      const acceptEl = $('cAccept');
+      acceptEl.textContent = pct;
+      acceptEl.style.color = acceptanceColor(rate) || '#1c1c1e';
+      $('cAcceptSub').textContent = data.total_reactions > 0
+        ? data.total_reactions + ' reactions'
+        : 'no reactions yet';
+
+      $('statCards').classList.remove('hidden');
+
+      const breakdown = data.severity_breakdown || {};
+      const sevKeys = Object.keys(breakdown).sort((a, b) => breakdown[b] - breakdown[a]);
+      if (sevKeys.length > 0) {
+        $('sevList').innerHTML = sevKeys.map(sev => `
+          <div class="sev-item">
+            <span class="sev-badge" style="background:${SEV_COLORS[sev] || '#555'}">${sev}</span>
+            <span class="sev-count">${breakdown[sev]}</span>
+          </div>`).join('');
+        $('sevSection').classList.remove('hidden');
+      }
+    }
+
+    // ── Reviews table ────────────────────────────────────────────────────────
+
+    let _loadedCount = 0;
+    const _commentCache = new Map(); // runId -> comments[] | null
+
+    function fmtTime(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleString(undefined, {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+    }
+
+    function buildReviewRows(reviews) {
+      return reviews.map(r => {
+        const sha = r.head_sha ? r.head_sha.slice(0, 7) : '—';
+        const badge = r.posted
+          ? '<span class="badge badge-posted">posted</span>'
+          : '<span class="badge badge-dry">dry run</span>';
+        return `
+          <tr class="review-row" onclick="toggleDetail(${r.id})">
+            <td><span class="expand-arrow" id="arrow-${r.id}">&#9654;</span><strong>#${r.pr_number}</strong></td>
+            <td class="mono">${escapeHtml(sha)}</td>
+            <td>${r.files_reviewed ?? 0}</td>
+            <td>${r.comment_count ?? 0}</td>
+            <td>${badge}</td>
+            <td class="muted">${fmtTime(r.created_at)}</td>
+            <td><button class="btn-rerun" onclick="event.stopPropagation();rerunPR('${_currentOwner}','${_currentRepo}',${r.pr_number},this)">Re-run</button></td>
+          </tr>
+          <tr class="detail-row hidden" id="detail-${r.id}">
+            <td colspan="7"><div class="detail-inner" id="detail-body-${r.id}">Loading…</div></td>
+          </tr>`;
+      }).join('');
+    }
+
+    function renderReviews(reviews) {
+      const body = $('reviewsBody');
+      _commentCache.clear();
+
+      if (reviews.length === 0) {
+        body.innerHTML = '<div class="empty-msg">No reviews recorded yet.</div>';
+      } else {
+        body.innerHTML = `
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr>
+                <th>PR</th><th>Commit</th><th>Files</th><th>Comments</th><th>Posted</th><th>Time</th><th></th>
+              </tr></thead>
+              <tbody id="reviewsTbody">${buildReviewRows(reviews)}</tbody>
+            </table>
+          </div>
+          <div class="load-more-wrap" id="loadMoreWrap">
+            <button class="btn-load-more" id="loadMoreBtn" onclick="loadMoreReviews()">Load more</button>
+          </div>`;
+        _loadedCount = reviews.length;
+        $('reviewsCount').textContent = reviews.length + ' shown';
+        if (reviews.length < 20) $('loadMoreBtn').style.display = 'none';
+      }
+      $('reviewsSection').classList.remove('hidden');
+    }
+
+    async function loadMoreReviews() {
+      const btn = $('loadMoreBtn');
+      btn.disabled = true;
+      btn.textContent = 'Loading…';
+      try {
+        const res = await fetch(`/reviews/${_currentOwner}/${_currentRepo}?limit=20&offset=${_loadedCount}`);
+        if (!res.ok) throw new Error('Failed');
+        const data = await res.json();
+        const reviews = data.reviews || [];
+        document.getElementById('reviewsTbody').insertAdjacentHTML('beforeend', buildReviewRows(reviews));
+        _loadedCount += reviews.length;
+        $('reviewsCount').textContent = _loadedCount + ' shown';
+        if (reviews.length < 20) {
+          btn.style.display = 'none';
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Load more';
+        }
+      } catch {
+        btn.disabled = false;
+        btn.textContent = 'Load more';
+      }
+    }
+
+    // ── Comment drill-down ────────────────────────────────────────────────────
+
+    async function toggleDetail(runId) {
+      const detailRow = $(`detail-${runId}`);
+      const arrow = $(`arrow-${runId}`);
+
+      if (!detailRow.classList.contains('hidden')) {
+        detailRow.classList.add('hidden');
+        arrow.innerHTML = '&#9654;';
+        return;
+      }
+
+      detailRow.classList.remove('hidden');
+      arrow.innerHTML = '&#9660;';
+
+      if (_commentCache.has(runId)) {
+        renderDetailBody(runId, _commentCache.get(runId));
+        return;
+      }
+
+      try {
+        const res = await fetch(`/runs/${runId}/comments`);
+        const data = await res.json();
+        const comments = res.ok ? (data.comments || []) : null;
+        _commentCache.set(runId, comments);
+        renderDetailBody(runId, comments);
+      } catch {
+        _commentCache.set(runId, null);
+        renderDetailBody(runId, null);
+      }
+    }
+
+    function renderDetailBody(runId, comments) {
+      const el = $(`detail-body-${runId}`);
+      if (!comments) {
+        el.innerHTML = '<span class="no-comments">Could not load comments.</span>';
+        return;
+      }
+      if (comments.length === 0) {
+        el.innerHTML = '<span class="no-comments">No comments recorded for this review.</span>';
+        return;
+      }
+      el.innerHTML = `<div class="cmt-list">${comments.map(c => `
+        <div class="cmt-item">
+          <div class="cmt-left">
+            <span class="sev-badge" style="background:${SEV_COLORS[c.severity] || '#555'}">${escapeHtml(c.severity || '?')}</span>
+          </div>
+          <div>
+            <div class="cmt-path">${escapeHtml(c.path)}</div>
+            <div class="cmt-body">${escapeHtml(c.body || '')}</div>
+          </div>
+        </div>`).join('')}
+      </div>`;
+    }
+
+    // ── Re-run ────────────────────────────────────────────────────────────────
+
+    async function rerunPR(owner, repo, prNumber, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Queuing…';
+      try {
+        const res = await fetch(`/rerun/${owner}/${repo}/${prNumber}`, { method: 'POST' });
+        btn.textContent = res.ok ? 'Queued!' : 'Error';
+      } catch {
+        btn.textContent = 'Error';
+      }
+      setTimeout(() => { btn.textContent = 'Re-run'; btn.disabled = false; }, 2500);
+    }
+
+    // ── Failed jobs ───────────────────────────────────────────────────────────
+
+    async function loadFailedJobs() {
+      try {
+        const res = await fetch('/failed-jobs');
+        if (!res.ok) return; // RQ not available — silently skip
+        const data = await res.json();
+        const jobs = data.failed_jobs || [];
+        if (jobs.length === 0) {
+          $('failedSection').classList.add('hidden');
+          return;
+        }
+        $('failedCount').textContent = jobs.length + ' jobs';
+        $('failedBody').innerHTML = jobs.map(j => {
+          const payload = (j.args || [])[0] || {};
+          const label = payload.owner
+            ? `${payload.owner}/${payload.repo} #${payload.pr_number}`
+            : j.id.slice(0, 8) + '…';
+          const endedAt = j.ended_at ? new Date(j.ended_at).toLocaleString() : '—';
+          const trace = j.exc_info || '';
+          return `
+            <div class="failed-job-item">
+              <div class="failed-job-meta">
+                <strong>${escapeHtml(label)}</strong>
+                <span>failed at ${escapeHtml(endedAt)}</span>
+                <button class="btn-rerun" onclick="retryJob('${escapeHtml(j.id)}', this)">Retry</button>
+              </div>
+              ${trace ? `
+                <div class="failed-trace" onclick="this.classList.toggle('expanded')">${escapeHtml(trace)}</div>
+                <div class="failed-trace-hint">Click traceback to expand</div>` : ''}
+            </div>`;
+        }).join('');
+        $('failedSection').classList.remove('hidden');
+      } catch { /* ignore */ }
+    }
+
+    async function retryJob(jobId, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Retrying…';
+      try {
+        const res = await fetch(`/failed-jobs/${jobId}/retry`, { method: 'POST' });
+        if (res.ok) {
+          btn.textContent = 'Queued!';
+          setTimeout(loadFailedJobs, 1500);
+        } else {
+          btn.textContent = 'Error';
+          btn.disabled = false;
+        }
+      } catch {
+        btn.textContent = 'Error';
+        btn.disabled = false;
+      }
+    }
+
+    // ── Config ────────────────────────────────────────────────────────────────
+
+    function renderConfig(cfg) {
+      const enabled = cfg.enabled !== false;
+      $('cfgEnabled').checked = enabled;
+      $('cfgEnabledLabel').textContent = enabled ? 'Enabled' : 'Disabled';
+      $('cfgFocus').value = cfg.focus || 'all';
+      $('cfgMaxComments').value = cfg.max_comments ?? 20;
+      $('cfgIgnorePaths').value = (cfg.ignore_paths || []).join(', ');
+      $('configSection').classList.remove('hidden');
+    }
+
+    $('cfgEnabled').addEventListener('change', function () {
+      $('cfgEnabledLabel').textContent = this.checked ? 'Enabled' : 'Disabled';
+    });
+
+    $('cfgSaveBtn').addEventListener('click', async () => {
+      if (!_currentOwner || !_currentRepo) return;
+      const btn = $('cfgSaveBtn');
+      const msg = $('cfgMsg');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      msg.style.display = 'none';
+
+      const rawPaths = $('cfgIgnorePaths').value.trim();
+      const ignore_paths = rawPaths ? rawPaths.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+      try {
+        const res = await fetch(`/config/${_currentOwner}/${_currentRepo}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled: $('cfgEnabled').checked,
+            focus: $('cfgFocus').value,
+            max_comments: parseInt($('cfgMaxComments').value, 10),
+            ignore_paths,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `Save failed (${res.status})`);
+        msg.textContent = 'Config saved';
+        msg.className = 'save-msg ok';
+        msg.style.display = 'inline';
+        setTimeout(() => { msg.style.display = 'none'; }, 3000);
+      } catch (err) {
+        msg.textContent = err.message;
+        msg.className = 'save-msg err';
+        msg.style.display = 'inline';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save config';
+      }
+    });
+
+    // ── Auto-refresh ──────────────────────────────────────────────────────────
+
+    let _autoRefreshTimer = null;
+
+    async function refreshCurrent() {
+      if (!_currentOwner || !_currentRepo) return;
+      try {
+        const [sRes, rRes] = await Promise.all([
+          fetch(`/stats/${_currentOwner}/${_currentRepo}`),
+          fetch(`/reviews/${_currentOwner}/${_currentRepo}?limit=${Math.max(_loadedCount, 20)}`),
+        ]);
+        if (sRes.ok) renderStats(await sRes.json());
+        if (rRes.ok) renderReviews((await rRes.json()).reviews || []);
+        await loadFailedJobs();
+      } catch { /* silent */ }
+    }
+
+    $('autoRefresh').addEventListener('change', function () {
+      const dot = $('refreshDot');
+      if (this.checked) {
+        _autoRefreshTimer = setInterval(refreshCurrent, 30000);
+        dot.classList.add('active');
+      } else {
+        clearInterval(_autoRefreshTimer);
+        _autoRefreshTimer = null;
+        dot.classList.remove('active');
+      }
+    });
+
+    // ── Search ────────────────────────────────────────────────────────────────
+
+    let _currentOwner = null, _currentRepo = null;
+
+    $('searchForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const val = $('repoInput').value.trim();
+      const parts = val.split('/');
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        showError('Enter in owner/repo format, e.g. acme/api');
+        return;
+      }
+      const [owner, repo] = parts;
+
+      _currentOwner = owner;
+      _currentRepo = repo;
+      _loadedCount = 0;
+
+      hideError();
+      setLoading(true);
+      $('landing').classList.add('hidden');
+      $('statCards').classList.add('hidden');
+      $('sevSection').classList.add('hidden');
+      $('reviewsSection').classList.add('hidden');
+      $('failedSection').classList.add('hidden');
+      $('configSection').classList.add('hidden');
+      $('cfgMsg').style.display = 'none';
+
+      try {
+        const [sRes, rRes, cRes] = await Promise.all([
+          fetch(`/stats/${owner}/${repo}`),
+          fetch(`/reviews/${owner}/${repo}`),
+          fetch(`/config/${owner}/${repo}`),
+        ]);
+
+        if (!sRes.ok) {
+          const body = await sRes.json().catch(() => ({}));
+          throw new Error(body.error || `Stats request failed (${sRes.status})`);
+        }
+
+        renderStats(await sRes.json());
+
+        const label = $('repoLabel');
+        label.innerHTML = `Showing stats for <strong>${escapeHtml(val)}</strong>`;
+        label.style.display = 'block';
+
+        if (rRes.ok) renderReviews((await rRes.json()).reviews || []);
+        if (cRes.ok) renderConfig(await cRes.json());
+
+        await loadFailedJobs();
+      } catch (err) {
+        showError(err.message);
+        $('landing').classList.remove('hidden');
+      } finally {
+        setLoading(false);
+      }
+    });
   </script>
 </body>
 </html>

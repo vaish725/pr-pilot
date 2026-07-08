@@ -45,6 +45,25 @@ class ReviewComment(Base):
     run = relationship('ReviewRun', back_populates='comments')
 
 
+class RepoConfig(Base):
+    """Per-repo bot configuration stored in DB (overrides .reviewbot.yml)."""
+
+    __tablename__ = 'repo_configs'
+
+    id = Column(Integer, primary_key=True)
+    owner = Column(String(255), nullable=False)
+    repo = Column(String(255), nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    focus = Column(String(20), default='all', nullable=False)
+    ignore_paths = Column(Text, default='[]')  # JSON array
+    max_comments = Column(Integer, default=20, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('owner', 'repo', name='uq_repo_config'),
+    )
+
+
 class CommentReaction(Base):
     """Tracks user reactions (+1/-1) posted as replies to bot review comments."""
 

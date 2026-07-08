@@ -52,6 +52,39 @@ def _save_review_run(
         logger.exception('Failed to persist review run for %s/%s#%s', owner, repo, pr_number)
 
 
+def _load_config(owner: str, repo: str, gh, head_sha):
+    """Return ReviewConfig: DB row > .reviewbot.yml > defaults."""
+    if os.getenv('DATABASE_URL'):
+        try:
+            import json as _json
+            from pr_pilot.db import get_session, init_db
+            from pr_pilot.models import RepoConfig
+            from pr_pilot.config import ReviewConfig
+            from sqlalchemy import select
+            init_db()
+            with get_session() as session:
+                row = session.scalar(
+                    select(RepoConfig).where(
+                        RepoConfig.owner == owner, RepoConfig.repo == repo,
+                    )
+                )
+                if row:
+                    return ReviewConfig(
+                        enabled=row.enabled,
+                        focus=row.focus,
+                        ignore_paths=_json.loads(row.ignore_paths or '[]'),
+                        max_comments=row.max_comments,
+                    )
+        except Exception:
+            logger.exception('Failed to load DB config for %s/%s', owner, repo)
+
+    cfg = gh.fetch_reviewbot_config(owner, repo, head_sha) if head_sha else None
+    if cfg is not None:
+        return cfg
+    from pr_pilot.config import ReviewConfig
+    return ReviewConfig()
+
+
 def process_pr_job(payload: Dict):
     """Process a PR: fetch diff, analyze, prepare comments, and optionally post.
 
@@ -83,11 +116,8 @@ def process_pr_job(payload: Dict):
 
     head_sha = getattr(gh, '_last_head_sha', None)
 
-    # Load per-repo config from .reviewbot.yml (or defaults if absent)
-    cfg = gh.fetch_reviewbot_config(owner, repo, head_sha) if head_sha else None
-    if cfg is None:
-        from pr_pilot.config import ReviewConfig
-        cfg = ReviewConfig()
+    # DB config takes precedence; fall back to .reviewbot.yml then defaults
+    cfg = _load_config(owner, repo, gh, head_sha)
 
     if not cfg.enabled:
         logger.info('Review disabled via .reviewbot.yml for %s/%s#%s', owner, repo, pr_number)

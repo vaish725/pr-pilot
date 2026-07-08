@@ -110,4 +110,4 @@ def test_dashboard_returns_html():
     assert resp.status_code == 200
     assert 'text/html' in resp.headers['content-type']
     assert 'PR Pilot Admin' in resp.text
-    assert 'react' in resp.text.lower()
+    assert 'Load stats' in resp.text

@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import hmac
 import hashlib
 import logging
@@ -90,6 +92,11 @@ class SimulateRequest(BaseModel):
     owner: str
     repo: str
     pr_number: int
+
+
+@app.get('/')
+async def root():
+    return RedirectResponse(url='/dashboard')
 
 
 @app.get('/metrics')
@@ -376,7 +383,7 @@ async def repo_stats(owner: str, repo: str):
 
 
 @app.get('/reviews/{owner}/{repo}')
-async def repo_reviews(owner: str, repo: str, limit: int = 20):
+async def repo_reviews(owner: str, repo: str, limit: int = 20, offset: int = 0):
     """Return recent review runs for a repo, newest first."""
     if not os.getenv('DATABASE_URL'):
         return JSONResponse({'error': 'DATABASE_URL not configured'}, status_code=501)
@@ -390,6 +397,7 @@ async def repo_reviews(owner: str, repo: str, limit: int = 20):
                 select(ReviewRun)
                 .where(ReviewRun.owner == owner, ReviewRun.repo == repo)
                 .order_by(ReviewRun.created_at.desc())
+                .offset(offset)
                 .limit(limit)
             ).scalars().all()
             result = [
@@ -404,7 +412,200 @@ async def repo_reviews(owner: str, repo: str, limit: int = 20):
                 }
                 for run in runs
             ]
-        return {'owner': owner, 'repo': repo, 'reviews': result}
+        return {'owner': owner, 'repo': repo, 'reviews': result, 'offset': offset, 'limit': limit}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class ConfigUpdate(BaseModel):
+    enabled: bool = True
+    focus: str = 'all'
+    ignore_paths: list[str] = []
+    max_comments: int = 20
+
+
+@app.get('/config/{owner}/{repo}')
+async def get_config(owner: str, repo: str):
+    """Return the stored bot config for a repo, or defaults if none saved."""
+    if not os.getenv('DATABASE_URL'):
+        return JSONResponse({'error': 'DATABASE_URL not configured'}, status_code=501)
+    try:
+        import json as _json
+        from pr_pilot.db import get_session, init_db
+        from pr_pilot.models import RepoConfig
+        from sqlalchemy import select
+        init_db()
+        with get_session() as session:
+            row = session.scalar(
+                select(RepoConfig).where(RepoConfig.owner == owner, RepoConfig.repo == repo)
+            )
+            if row:
+                return {
+                    'owner': owner, 'repo': repo,
+                    'enabled': row.enabled, 'focus': row.focus,
+                    'ignore_paths': _json.loads(row.ignore_paths or '[]'),
+                    'max_comments': row.max_comments,
+                    'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+                }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {'owner': owner, 'repo': repo, 'enabled': True, 'focus': 'all',
+            'ignore_paths': [], 'max_comments': 20, 'updated_at': None}
+
+
+@app.put('/config/{owner}/{repo}')
+async def update_config(owner: str, repo: str, body: ConfigUpdate):
+    """Save or update the bot config for a repo."""
+    if not os.getenv('DATABASE_URL'):
+        return JSONResponse({'error': 'DATABASE_URL not configured'}, status_code=501)
+    from pr_pilot.config import FOCUS_MODES
+    if body.focus not in FOCUS_MODES:
+        raise HTTPException(status_code=422, detail=f'focus must be one of {sorted(FOCUS_MODES)}')
+    if not (1 <= body.max_comments <= 100):
+        raise HTTPException(status_code=422, detail='max_comments must be between 1 and 100')
+    try:
+        import json as _json
+        from datetime import datetime, timezone
+        from pr_pilot.db import get_session, init_db
+        from pr_pilot.models import RepoConfig
+        from sqlalchemy import select
+        init_db()
+        with get_session() as session:
+            row = session.scalar(
+                select(RepoConfig).where(RepoConfig.owner == owner, RepoConfig.repo == repo)
+            )
+            if row:
+                row.enabled = body.enabled
+                row.focus = body.focus
+                row.ignore_paths = _json.dumps(body.ignore_paths)
+                row.max_comments = body.max_comments
+                row.updated_at = datetime.now(timezone.utc)
+            else:
+                session.add(RepoConfig(
+                    owner=owner, repo=repo,
+                    enabled=body.enabled, focus=body.focus,
+                    ignore_paths=_json.dumps(body.ignore_paths),
+                    max_comments=body.max_comments,
+                ))
+        _server_logger.info('Config saved', extra={'owner': owner, 'repo': repo})
+        return {'saved': True, 'owner': owner, 'repo': repo}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get('/runs/{run_id}/comments')
+async def run_comments(run_id: int):
+    """Return all comments recorded for a specific review run."""
+    if not os.getenv('DATABASE_URL'):
+        return JSONResponse({'error': 'DATABASE_URL not configured'}, status_code=501)
+    try:
+        from pr_pilot.db import get_session, init_db
+        from pr_pilot.models import ReviewRun, ReviewComment
+        from sqlalchemy import select
+        init_db()
+        with get_session() as session:
+            run = session.scalar(select(ReviewRun).where(ReviewRun.id == run_id))
+            if not run:
+                raise HTTPException(status_code=404, detail='Run not found')
+            comments = session.execute(
+                select(ReviewComment).where(ReviewComment.run_id == run_id)
+                .order_by(ReviewComment.id)
+            ).scalars().all()
+            result = [
+                {
+                    'id': c.id,
+                    'path': c.path,
+                    'position': c.position,
+                    'severity': c.severity,
+                    'body': c.body,
+                }
+                for c in comments
+            ]
+        return {'run_id': run_id, 'comments': result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post('/rerun/{owner}/{repo}/{pr_number}')
+async def rerun_review(owner: str, repo: str, pr_number: int):
+    """Re-enqueue a PR review job."""
+    payload = {'owner': owner, 'repo': repo, 'pr_number': pr_number}
+    if RQ_AVAILABLE:
+        try:
+            redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+            redis_conn = Redis.from_url(redis_url)
+            q = Queue('pr-jobs', connection=redis_conn)
+            job = q.enqueue(
+                process_pr_job, payload,
+                retry=Retry(max=MAX_RETRIES, interval=RETRY_INTERVALS),
+                on_failure=review_failure_callback,
+            )
+            return {'queued': True, 'job_id': job.id}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+    else:
+        def _bg():
+            try:
+                process_pr_job(payload)
+            except Exception:
+                pass
+        threading.Thread(target=_bg, daemon=True).start()
+        return {'queued': True, 'job_id': None}
+
+
+@app.get('/failed-jobs')
+async def failed_jobs_list(limit: int = 20):
+    """List recently failed RQ jobs from the pr-jobs queue."""
+    if not RQ_AVAILABLE:
+        return JSONResponse({'error': 'RQ not available'}, status_code=501)
+    try:
+        from rq.registry import FailedJobRegistry
+        from rq.job import Job
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+        redis_conn = Redis.from_url(redis_url)
+        registry = FailedJobRegistry('pr-jobs', connection=redis_conn)
+        job_ids = registry.get_job_ids(0, limit)
+        jobs = []
+        for jid in job_ids:
+            try:
+                job = Job.fetch(jid, connection=redis_conn)
+                args = list(job.args) if job.args else []
+                jobs.append({
+                    'id': jid,
+                    'args': args,
+                    'kwargs': dict(job.kwargs) if job.kwargs else {},
+                    'exc_info': str(job.exc_info)[:500] if job.exc_info else None,
+                    'ended_at': job.ended_at.isoformat() if job.ended_at else None,
+                })
+            except Exception:
+                pass
+        return {'failed_jobs': jobs}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post('/failed-jobs/{job_id}/retry')
+async def retry_failed_job(job_id: str):
+    """Re-enqueue a failed job and remove it from the failed registry."""
+    if not RQ_AVAILABLE:
+        return JSONResponse({'error': 'RQ not available'}, status_code=501)
+    try:
+        from rq.job import Job
+        from rq.registry import FailedJobRegistry
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+        redis_conn = Redis.from_url(redis_url)
+        job = Job.fetch(job_id, connection=redis_conn)
+        payload = list(job.args)[0] if job.args else {}
+        q = Queue('pr-jobs', connection=redis_conn)
+        q.enqueue(
+            process_pr_job, payload,
+            retry=Retry(max=MAX_RETRIES, interval=RETRY_INTERVALS),
+            on_failure=review_failure_callback,
+        )
+        FailedJobRegistry('pr-jobs', connection=redis_conn).remove(job)
+        return {'retried': True, 'job_id': job_id}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
